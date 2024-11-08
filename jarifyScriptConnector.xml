@@ -1,0 +1,3064 @@
+<?xml version="1.0" encoding="UTF-8"?><MetamergeConfig IDIversion="Created by SDI7.2 - 2024-06-26" created="Thu Nov 07 23:19:05 CET 2024" createdBy="eddiehartman" modified="Fri Nov 08 11:12:07 CET 2024" modifiedBy="eddiehartman" version="7.1.1">
+    <Folder name="AssemblyLines">
+        <AssemblyLine name="jarifyScriptedConnector">
+            <ModTime>1731058624311</ModTime>
+            <Settings/>
+            <Hooks/>
+            <CheckpointConfig/>
+            <SandboxConfig/>
+            <SimulationConfig>
+                <SimulationStates>
+                    <Component name="jarifyFunctions" state="Enabled"/>
+                    <Component name="testInput" state="Enabled"/>
+                    <Component name="testReadWriteBinary" state="Enabled"/>
+                    <Component name="DoIt" state="Enabled"/>
+                </SimulationStates>
+                <ProxySettings/>
+            </SimulationConfig>
+            <LogConfig/>
+            <ContainerEF name="EntryFeedContainer"/>
+            <ContainerDF name="DataFlowContainer">
+                <ModTime>1731058624311</ModTime>
+                <Script name="jarifyFunctions">
+                    <ModTime>1731058205502</ModTime>
+                    <parameter name="script"><![CDATA[var __httpPath = ""; // Used for some errors
+var __xmlParser = system.getParser("ibmdi.XML2"); // For parsing xml
+
+function log(lvl, msg) {
+	if (typeof lvl == "undefined") {
+		lvl = "INFO";
+		msg = "";
+	} else {
+		msg = lvl;
+		lvl = "INFO";
+	}
+	
+	task.logmsg(msg);
+	java.lang.System.out.println(lvl + " - " + msg);
+}
+
+// Handle base64 decoding
+function decode(encodedString)  {
+	var ByteArrayInputStream = Packages.java.io.ByteArrayInputStream;
+	var ZipEntry = Packages.java.util.zip.ZipEntry;
+	var ZipOutputStream = Packages.java.util.zip.ZipOutputStream;
+	var Base64 = Packages.java.util.Base64;
+	
+	// Retrieve the base64 encoded string from the resource script 'ScriptConnector.class'
+	var encodedString = system.getResource("ScriptConnector.class");
+	
+	// Decode the base64 string
+	var decodedBytes = Base64.getDecoder().decode(encodedString);
+	
+	// Create an InputStream from the decoded byte array
+	var inputStream = new ByteArrayInputStream(decodedBytes);
+	
+	// Define the name for the entry to be added in the zip file
+	var zipEntryName = "ScriptConnector.class";
+	var zipEntry = new ZipEntry(zipEntryName);
+}
+
+function throwURLexception(exMsg, ex) {
+	if (typeof ex != "undefined") exMsg += "\n-> " + ex;
+	throw new java.net.MalformedURLException(exMsg + " - " + __httpPath)
+}
+
+function throwIOexception(exMsg, ex) {
+	if (typeof ex != "undefined") exMsg += "\n-> " + ex;
+	throw new java.net.IOException(exMsg);
+}
+
+// Make sure a valid path ends in slash
+function fixJarPath(path, connectorName) {
+	if (!path) 
+		path = ""
+	else {
+		path = path.trim();
+	}
+	if (path.endsWith("\\") || path.endsWith("/")) {
+		path += connectorName + ".jar"
+	} else
+	if (!path.toLowerCase().endsWith(".jar")) {
+		path += ".jar"
+	}	
+	return path;
+}
+
+// Get user input
+function getUserInput(entry) {
+	// set global __httpPath variable used by exception functions
+	__httpPath = entry.getString("http.path");
+	
+	// create obj with input from http base
+	var userInput = {
+		configPath : entry.getString("http.qs.configPath") 
+							|| throwURLexception("pathNotSpecified"),
+		connectorName : entry.getString("http.qs.connectorName") 
+							|| throwURLexception("nameNotSpecified"),
+		jarfilePath : fixJarPath(entry.getString("http.qs.jarfilePath"))
+	}
+
+	userInput.jarfilePath = getFullPathname(userInput.jarfilePath);
+	userInput.internalName = userInput.connectorName.toLowerCase();
+
+	return userInput
+}
+
+// Read and parse the config file to a DOM tree 
+//  as implemented by Entry & Attribute for hierarchical data
+function readAndParseConfig(configPath) {
+	try {
+		// Open and read in config file
+		var xmlFile = system.openFileForInput(configPath);
+		var xml = "";
+		var line = "";
+		while ((line = xmlFile.readLine()) != null) {
+			xml += line;
+		}
+		
+		// Prepare to parse using the XML Parser
+
+		__xmlParser.setParam("entry.tag",null);
+		__xmlParser.setParam("value.tag",null);
+		__xmlParser.setInputStream(xml);
+		__xmlParser.initParser();
+		
+		// Parse the XML into a DOM Node tree
+		domEntry = __xmlParser.readEntry();
+		return domEntry;
+	} catch (ex) {
+		throwIOexception("Cannot parse config file: " + configPath, ex);
+	}
+}
+
+// Find the ScriptConnector node in the entry DOM tree
+function findConnector(domEntry, connectorName) {
+	// Use XPath search to find the named Connector
+	var xpath = "//Folder[@name='Connectors']/Connector[@name='" + connectorName + "']";
+	var ctr = domEntry.getNodeList(xpath).item(0);
+	if (ctr == null) {
+		throwURLexception("Could not find connector " + connectorName + " in " + configFilepath);
+	}
+	
+	// Ensure it is scripted
+	var inheritFrom = ctr.getElementsByTagName("InheritFrom").item(0).getValue();
+	if (inheritFrom != "system:/Connectors/ibmdi.ScriptConnector") {
+		throwURLexception("Connector is not a ScriptConnector: " + connectorName);
+	}
+	
+	//Now create a new DOM tree (entry) with this Connector at it root
+	var ctrEntry = system.newEntry();
+	ctrEntry.setAttribute(ctr.cloneNode(true)); // true = Deep node tree clone
+	
+	return ctrEntry;
+}
+
+// Build a DOM tree based on the template for the tdi.xml file
+function buildTemplateDOM() {
+	// Get template tdi.xml value
+	var tdiXMLstr = system.getScriptText("templateTDIxml");
+	
+	// Set today's date in it
+	var datePattern = "E MMM d HH:mm:ss z YYYY";
+	var dateFormatter = new java.text.SimpleDateFormat(datePattern);
+	var todaysDateStr = dateFormatter.format(new java.util.Date());
+	var startPos = tdiXMLstr.indexOf("MetamergeConfig created=\"");
+	var tdiXMLstr = tdiXMLstr.substring(0,startPos + 25)
+		+ todaysDateStr
+		+ tdiXMLstr.substring(tdiXMLstr.indexOf("\" version"));
+	
+	// Parse the XML to a DOM tree that we can add the Connector DOM to
+	__xmlParser.setInputStream(tdiXMLstr);
+	__xmlParser.initParser();
+	tdiXMLentry = __xmlParser.readEntry();
+
+	return tdiXMLentry;
+}
+
+function getFullPathname(filePath) {
+	// Get working dir (which is Solution Directory by default)
+	var soldir = java.lang.System.getProperty("user.dir");
+	
+	// Complete full pathname
+	var fullPathname = filePath;
+	if (!fullPathname.toLowerCase().startsWith(soldir.toLowerCase())) {
+		// Add leading backslash if missing
+		if (!fullPathname.startsWith("\\") && !fullPathname.startsWith("/")) {
+			fullPathname = soldir + "\\" + fullPathname;
+		} else {
+			fullPathname = soldir + fullPathname;
+		}
+	}
+	return fullPathname;
+}
+
+// Return the contents of a binary file (e.g. class file) as an ArrayList
+function readBinaryFile(filePath) {
+	filePath = filePath.trim();
+	var fullPathname = getFullPathname(filePath);
+	
+	var file = new java.io.File(fullPathname);
+	var encoded = java.util.Base64.getEncoder().encodeToString(java.nio.file.Files.readAllBytes(file.toPath()));
+	return encoded;
+	
+	// Left this old stuff in just in case
+	// Open an input stream
+	var inputStream = new java.io.FileInputStream(fullPathname);
+	var data;
+	var strBuff = new java.lang.StringBuffer();
+	// Read int values and append these to the string buffer
+	while ((data = inputStream.read()) != -1) {
+	    strBuff.append(data);
+	}
+	inputStream.close();
+	
+	return strBuff.toString();
+}
+
+// Write a binary file based on the passed 'contentsStr' string
+function writeBinaryFile(filePath, encoded) {
+	filePath = filePath.trim() + ".2";
+	var fullPathname = getFullPathname(filePath);
+	var decoded = java.util.Base64.getDecoder().decode(encoded);
+	// Write it to file with an output stream
+	var outputStream = new java.io.FileOutputStream(fullPathname);
+	var len = encoded.length;
+	for (var i in decoded) {
+		outputStream.write(i)
+	}
+	outputStream.close();
+	return true;
+}
+
+function addFile(args) {
+	var path = args.path;
+	var entries = args.entries;
+	entries[path] = {};
+	for (var arg in args) {
+		entries[path][arg] = args[arg]
+	}
+}
+
+// Archive functions
+_zipperObj = function(useBuffer) {
+	this.BUFFER = useBuffer || 2048;
+	this.data = java.lang.reflect.Array.newInstance(java.lang.Byte.TYPE, this.BUFFER);
+	this.zos;
+	
+	this.unzip = function(filePath) {
+		try {
+			this.log("-------");
+			this.log("Unzipping " + filePath);
+			var dest = null; // BufferedOutputStream 
+			var inf = new java.io.File(filePath);
+			if (!inf.exists()) {
+				throw "Input jar file does not exist: " + filePath;
+			}
+			var fis = new java.io.FileInputStream(filePath);
+			var zis = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(fis));
+			var entry; // ZipEntry
+			while ((entry = zis.getNextEntry()) != null) {
+				// write the files to the disk
+				var outf = new java.io.File(toFolder + entry.getName());
+				if (entry.isDirectory()) {
+					if (outf.mkdir()) {
+						this.log("Creating folder " + outf);
+					}
+				} else {
+					for (var parent = outf.getParentFile(); parent != null; parent = parent.getParentFile()) {
+						if (parent.mkdir()) {
+							this.log("Creating folder " + parent);							
+						}
+					}
+				}
+			}
+
+			zis.close();
+			fis = new java.io.FileInputStream(filePath);
+			zis = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(fis));
+			while ((entry = zis.getNextEntry()) != null) {
+				var count;
+				// write the files to the disk
+				outf = new java.io.File(toFolder + entry.getName());
+				if (!entry.isDirectory()) {
+					this.log("Extracting: " + entry.getName() + " method: " + entry.getMethod());
+					var fos = new java.io.FileOutputStream(toFolder + entry.getName());
+					var dest = new java.io.BufferedOutputStream(fos, this.BUFFER);
+					while ((count = zis.read(this.data, 0, this.BUFFER)) != -1) {
+						dest.write(this.data, 0, count);
+					}
+					dest.flush();
+					dest.close();
+				}
+			}
+			zis.close();
+		} catch (e) {
+			throw "Error unzipping - " +  e;
+		}
+	}
+	
+	this.zip = function(args) {
+		// path, content
+		var jarEntries = args.entries;
+		var jarfilePath = args.jarfilePath;
+		try {
+			var file = new java.io.File(jarfilePath);
+			var fos = new java.io.FileOutputStream(file);
+			var entry;
+			var data;
+			
+			this.zos = new java.util.zip.ZipOutputStream(fos);
+			this.zos.setLevel(8);
+			
+			for (var entryName in jarEntries) {
+			 	entry = new java.util.zip.ZipEntry(entryName); 
+			 	this.zos.putNextEntry(entry);
+			 	
+				data = jarEntries[entryName];
+				if (data.base64) {
+					this.zipBinary(data.content)								
+				} else {
+					this.zos.write(data.content.getBytes())
+				}
+			
+				this.zos.closeEntry();
+			}
+			
+			this.zos.finish();
+			this.zos.close();
+		} catch(ex) {
+			throw "Error creating jar - " + ex;
+		}
+	}
+	
+	// Decode a base64 string to the original content
+	this.zipBinary = function(base64string) {
+		var decoded = java.util.Base64.getDecoder().decode(base64string);
+		// Buffer to hold bytes for writing
+		var buffer = java.lang.reflect.Array.newInstance(java.lang.Byte.TYPE, 1024);
+		var len;
+
+		// Create an InputStream from the decoded byte array
+		var inputStream = new java.io.ByteArrayInputStream(decoded);
+		
+		// Buffer to hold bytes for writing
+		var buffer = java.lang.reflect.Array.newInstance(java.lang.Byte.TYPE, 1024);
+		var len;
+		
+		// Read from inputStream and write to ZipOutputStream
+		while ((len = inputStream.read(buffer)) > 0) {
+		    this.zos.write(buffer, 0, len);
+		}
+	}
+	
+	this.log = function(lvl, msg) {
+		if (typeof lvl == "undefined") {
+			lvl = "INFO";
+			msg = "";
+		} else
+		if (typeof msg == "undefined") {
+			msg = lvl;
+			lvl = "INFO";
+		}
+		log(lvl, msg);
+		java.lang.System.out.println(lvl + " - " + msg);
+	}
+	
+	return this;
+}
+
+// Create a global variable to access this functionality
+_zipper = new _zipperObj();]]></parameter>
+                </Script>
+                <ALMap name="testInput">
+                    <InheritFrom>[no inheritance]</InheritFrom>
+                    <ModTime>1731054950364</ModTime>
+                    <AttributeMap name="Input">
+                        <InheritFrom>[parent]</InheritFrom>
+                        <ModTime>1731054950364</ModTime>
+                        <AttributeMapItem>
+                            <Name>http.qs.configPath</Name>
+                            <Type>advanced</Type>
+                            <Script>"C:\\TDI\\SolDir\\TutProfile\\TutProfile.xml"</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.connectorName</Name>
+                            <Type>advanced</Type>
+                            <Script>"ManagedSystem"</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.debug</Name>
+                            <Type>advanced</Type>
+                            <Script>true</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.jarfilePath</Name>
+                            <Type>advanced</Type>
+                            <Script>"JarifyScriptConnector/ManagedSystem.jar"</Script>
+                        </AttributeMapItem>
+                    </AttributeMap>
+                    <State>Enabled</State>
+                </ALMap>
+                <Script name="testReadWriteBinary">
+                    <ModTime>1730972946836</ModTime>
+                    <parameter name="enabled">false</parameter>
+                    <parameter name="script"><![CDATA[var filePath = "\\JarifyScriptedConnector\\ScriptConnector.class";
+
+classStrRead = readBinaryFile(filePath);
+
+classStr = system.getScriptText("ScriptConnector.class");
+
+writeBinaryFile(filePath + "jarbinks", classStr);
+
+i = 42;]]></parameter>
+                </Script>
+                <Script name="DoIt">
+                    <ModTime>1731058624311</ModTime>
+                    <parameter name="script"><![CDATA[var jarEntries = {}; // The directory of the files in the jar file 
+var ui = getUserInput(work);
+
+// First read in the Config to a DOM tree we can search and prune
+var domEntry = readAndParseConfig(ui.configPath);
+
+// Find the ScriptConnector specified in this Config
+var ctrEntry = findConnector(domEntry, ui.connectorName);
+
+// Use the template under Resources/Scripts to start a new DOM tree
+// for 
+var tdiXMLentry = buildTemplateDOM();
+
+// Now attach the connector DOM tree to the template tdi.xml one
+// Add the Connector under the Folder node
+tdiXMLentry.getNodeList("//Folder").item(0).appendChild(ctrEntry.Connector);
+
+// Add the tdi.xl file to the list to add
+addFile({
+	entries: jarEntries,
+	path: "tdi.xml",
+	content: '<?xml version="1.0" encoding="UTF-8"?>\n' + tdiXMLentry.toXML()
+})
+// Add the ScriptConnector class
+addFile({
+	entries: jarEntries,
+	path: "com/ibm/di/connector/ScriptConnector)",
+	content: system.getScriptText("ScriptConnector.class"),
+	base64: true	
+})
+
+_zipper.log("Creating JAR file: " + ui.jarfilePath);
+try {
+	_zipper.zip({
+		jarfilePath: ui.jarfilePath,
+		entries: jarEntries
+	})
+} catch (ex) {
+	throw "Error creating archive: " + ex;
+}]]></parameter>
+                </Script>
+            </ContainerDF>
+            <ThreadOptions/>
+            <Operations/>
+            <InitParams>
+                <Schema name="AssemblyLineInitParams"/>
+            </InitParams>
+        </AssemblyLine>
+        <AssemblyLine name="jarifyScriptedConnector working">
+            <ModTime>1731017933264</ModTime>
+            <Settings/>
+            <Hooks/>
+            <CheckpointConfig/>
+            <SandboxConfig/>
+            <SimulationConfig>
+                <SimulationStates>
+                    <Component name="testReadWriteBinary" state="Enabled"/>
+                    <Component name="fromChat" state="Enabled"/>
+                    <Component name="jarifyFunctions" state="Enabled"/>
+                    <Component name="testInput" state="Enabled"/>
+                    <Component name="DoIt" state="Enabled"/>
+                    <Component name="templateText" state="Enabled"/>
+                </SimulationStates>
+                <ProxySettings/>
+            </SimulationConfig>
+            <LogConfig/>
+            <ContainerEF name="EntryFeedContainer"/>
+            <ContainerDF name="DataFlowContainer">
+                <Script name="testReadWriteBinary">
+                    <ModTime>1730990498967</ModTime>
+                    <parameter name="enabled">false</parameter>
+                    <parameter name="script"><![CDATA[var filePath = "\\JarifyScriptedConnector\\ScriptConnector.class";
+
+classStrRead = readBinaryFile(filePath);
+
+classStr = system.getScriptText("ScriptConnector.class");
+
+writeBinaryFile(filePath + "jarbinks", classStr);
+
+i = 42;]]></parameter>
+                </Script>
+                <Script name="fromChat">
+                    <ModTime>1731008747597</ModTime>
+                    <parameter name="enabled">false</parameter>
+                    <parameter name="script"><![CDATA[// Import necessary Java classes using full paths for TDI compatibility
+var ByteArrayInputStream = Packages.java.io.ByteArrayInputStream;
+var ZipEntry = Packages.java.util.zip.ZipEntry;
+var ZipOutputStream = Packages.java.util.zip.ZipOutputStream;
+var Base64 = Packages.java.util.Base64;
+
+// Retrieve the base64 encoded string from the resource script 'ScriptConnector.class'
+var encodedString = system.getResource("ScriptConnector.class");
+
+// Decode the base64 string
+var decodedBytes = Base64.getDecoder().decode(encodedString);
+
+// Create an InputStream from the decoded byte array
+var inputStream = new ByteArrayInputStream(decodedBytes);
+
+// Define the name for the entry to be added in the zip file
+var zipEntryName = "ScriptConnector.class";
+var zipEntry = new ZipEntry(zipEntryName);
+
+// Add the entry to the ZipOutputStream (assuming ZipOutputStream is already open)
+ZipOutputStream.putNextEntry(zipEntry);
+
+// Buffer to hold bytes for writing
+var buffer = java.lang.reflect.Array.newInstance(java.lang.Byte.TYPE, 1024);
+var len;
+
+// Read from inputStream and write to ZipOutputStream
+while ((len = inputStream.read(buffer)) > 0) {
+    ZipOutputStream.write(buffer, 0, len);
+}
+
+// Close the current entry in the ZipOutputStream
+ZipOutputStream.closeEntry();
+
+// Close the InputStream to release resources
+inputStream.close();]]></parameter>
+                </Script>
+                <Script name="jarifyFunctions">
+                    <InheritFrom>[no inheritance]</InheritFrom>
+                    <ModTime>1731015390716</ModTime>
+                    <parameter name="script"><![CDATA[var __httpPath = ""; // Used for some errors
+var __xmlParser = system.getParser("ibmdi.XML2"); // For parsing xml
+var __jarEntries = {}; // For the collection of the entries for the jar file 
+
+function throwURLexception(exMsg, ex) {
+	if (typeof ex != "undefined") exMsg += "\n-> " + ex;
+	throw new java.net.MalformedURLException(exMsg + " - " + __httpPath)
+}
+
+function throwIOexception(exMsg, ex) {
+	if (typeof ex != "undefined") exMsg += "\n-> " + ex;
+	throw new java.net.IOException(exMsg);
+}
+
+// Get user input
+function getUserInput(entry) {
+	// set global __httpPath variable used by exception functions
+	__httpPath = entry.getString("http.path");
+	
+	// create obj with input from http base
+	var userInput = {
+		configPath : entry.getString("http.qs.configPath") 
+							|| throwURLexception("configPath not specified"),
+		connectorName : entry.getString("http.qs.connectorName") 
+							|| throwURLexception("Scripted connectorName not specified"),
+		jarfilePath : entry.getString("http.qs.jarfilePath") 
+							|| (entry.getString(http.qs.connectorName) + ".jar")
+	}
+
+	userInput.jarfilePath = getFullPathname(userInput.jarfilePath);
+	userInput.internalName = "com.tdi." + (userInput.connectorName || "NotSpecified").toLowerCase();
+
+	return userInput
+}
+
+// Read and parse the config file to a DOM tree 
+//  as implemented by Entry & Attribute for hierarchical data
+function readAndParseConfig(configPath) {
+	try {
+		// Open and read in config file
+		var xmlFile = system.openFileForInput(configPath);
+		var xml = "";
+		var line = "";
+		while ((line = xmlFile.readLine()) != null) {
+			xml += line;
+		}
+		
+		// Prepare to parse using the XML Parser
+
+		__xmlParser.setParam("entry.tag",null);
+		__xmlParser.setParam("value.tag",null);
+		__xmlParser.setInputStream(xml);
+		__xmlParser.initParser();
+		
+		// Parse the XML into a DOM Node tree
+		domEntry = __xmlParser.readEntry();
+		return domEntry;
+	} catch (ex) {
+		throwIOexception("Cannot parse config file: " + configPath, ex);
+	}
+}
+
+// Find the ScriptConnector node in the entry DOM tree
+function findConnector(domEntry, connectorName, configPath) {
+	// Use XPath search to find the named Connector
+	var xpath = "//Folder[@name='Connectors']/Connector[@name='" + connectorName + "']";
+	var ctr = domEntry.getNodeList(xpath).item(0);
+	if (ctr == null) {
+		throwURLexception("Could not find connector " + connectorName + " in " + configPath);
+	}
+	
+	// Ensure it is scripted
+	var inheritFrom = ctr.getElementsByTagName("InheritFrom").item(0).getValue();
+	if (inheritFrom != "system:/Connectors/ibmdi.ScriptConnector") {
+		throwURLexception("Connector is not a ScriptConnector: " + connectorName);
+	}
+	
+	//Now create a new DOM tree (entry) with this Connector at it root
+	var ctrEntry = system.newEntry();
+	ctrEntry.setAttribute(ctr.cloneNode(true)); // true = Deep node tree clone
+	
+	return ctrEntry;
+}
+
+// Build a DOM tree based on the template for the tdi.xml file
+function buildTemplateDOM() {
+	// Get template tdi.xml value
+	var tdiXMLstr = system.getScriptText("templateTDIxml");
+	
+	// Set today's date in it
+	var datePattern = "E MMM d HH:mm:ss z YYYY";
+	var dateFormatter = new java.text.SimpleDateFormat(datePattern);
+	var todaysDateStr = dateFormatter.format(new java.util.Date());
+	var startPos = tdiXMLstr.indexOf("MetamergeConfig created=\"");
+	var tdiXMLstr = tdiXMLstr.substring(0,startPos + 25)
+		+ todaysDateStr
+		+ tdiXMLstr.substring(tdiXMLstr.indexOf("\" version"));
+	
+	// Parse the XML to a DOM tree that we can add the Connector DOM to
+	__xmlParser.setInputStream(tdiXMLstr);
+	__xmlParser.initParser();
+	tdiXMLentry = __xmlParser.readEntry();
+
+	return tdiXMLentry;
+}
+
+function getFullPathname(filePath) {
+	// Get working dir (which is Solution Directory by default)
+	var soldir = java.lang.System.getProperty("user.dir");
+	
+	// Complete full pathname
+	var fullPathname = filePath;
+	if (!fullPathname.toLowerCase().startsWith(soldir.toLowerCase())) {
+		// Add leading backslash if missing
+		if (!fullPathname.startsWith("\\") && !fullPathname.startsWith("/")) {
+			fullPathname = soldir + "\\" + fullPathname;
+		} else {
+			fullPathname = soldir + fullPathname;
+		}
+	}
+	return fullPathname;
+}
+
+// Return the contents of a binary file (e.g. class file) as an ArrayList
+function readBinaryFile(filePath) {
+	filePath = filePath.trim();
+	var fullPathname = getFullPathname(filePath);
+	
+	var file = new java.io.File(fullPathname);
+	var encoded = java.util.Base64.getEncoder().encodeToString(java.nio.file.Files.readAllBytes(file.toPath()));
+	return encoded;
+	
+	// Left this old stuff in just in case
+	// Open an input stream
+	var inputStream = new java.io.FileInputStream(fullPathname);
+	var data;
+	var strBuff = new java.lang.StringBuffer();
+	// Read int values and append these to the string buffer
+	while ((data = inputStream.read()) != -1) {
+	    strBuff.append(data);
+	}
+	inputStream.close();
+	
+	return strBuff.toString();
+}
+
+// Write a binary file based on the passed 'contentsStr' string
+function writeBinaryFile(filePath, encoded) {
+	filePath = filePath.trim() + ".2";
+	var fullPathname = getFullPathname(filePath);
+	var decoded = java.util.Base64.getDecoder().decode(encoded);
+	// Write it to file with an output stream
+	var outputStream = new java.io.FileOutputStream(fullPathname);
+	var len = encoded.length;
+	for (var i in decoded) {
+		outputStream.write(i)
+	}
+	outputStream.close();
+	return true;
+}
+
+// For adding an entry to write to the jar file
+function addEntry(args) {
+	var filepath = args.filepath || "filePathNotSpecifiedError";
+	__jarEntries[filepath] = {};
+	for (var propName in args) {
+		__jarEntries[filepath][propName] = args[propName]
+	}
+}
+
+// Archive functions
+_zipperObj = function(useBuffer) {
+	this.BUFFER = useBuffer || 2048;
+	this.data = java.lang.reflect.Array.newInstance(java.lang.Byte.TYPE, this.BUFFER);
+
+	this.unzip = function(filePath) {
+		try {
+			this.log("-------");
+			this.log("Unzipping " + filePath);
+			var dest = null; // BufferedOutputStream 
+			var inf = new java.io.File(filePath);
+			if (!inf.exists()) {
+				throw "Input jar file does not exist: " + filePath;
+			}
+			var fis = new java.io.FileInputStream(filePath);
+			var zis = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(fis));
+			var entry; // ZipEntry
+			while ((entry = zis.getNextEntry()) != null) {
+				// write the files to the disk
+				var outf = new java.io.File(toFolder + entry.getName());
+				if (entry.isDirectory()) {
+					if (outf.mkdir()) {
+						this.log("Creating folder " + outf);
+					}
+				} else {
+					for (var parent = outf.getParentFile(); parent != null; parent = parent.getParentFile()) {
+						if (parent.mkdir()) {
+							this.log("Creating folder " + parent);							
+						}
+					}
+				}
+			}
+
+			zis.close();
+			fis = new java.io.FileInputStream(filePath);
+			zis = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(fis));
+			while ((entry = zis.getNextEntry()) != null) {
+				var count;
+				// write the files to the disk
+				outf = new java.io.File(toFolder + entry.getName());
+				if (!entry.isDirectory()) {
+					this.log("Extracting: " + entry.getName() + " method: " + entry.getMethod());
+					var fos = new java.io.FileOutputStream(toFolder + entry.getName());
+					var dest = new java.io.BufferedOutputStream(fos, this.BUFFER);
+					while ((count = zis.read(this.data, 0, this.BUFFER)) != -1) {
+						dest.write(this.data, 0, count);
+					}
+					dest.flush();
+					dest.close();
+				}
+			}
+			zis.close();
+		} catch (e) {
+			throw "Error unzipping - " +  e;
+		}
+	}
+	
+//	this.zip = function(connectorName, zipFilePath, jarEntries) {
+	this.zip = function(configPath, jarfilePath) {
+		try {
+			var file = new java.io.File(jarfilePath);
+			var fos = new java.io.FileOutputStream(file);
+			var entry;
+			var data;
+			
+			zos = new java.util.zip.ZipOutputStream(fos);
+			zos.setLevel(8);
+			
+			for (var entryName in __jarEntries) {
+			 	entry = new java.util.zip.ZipEntry(entryName); 
+				zos.putNextEntry(entry);
+
+				data = __jarEntries[entryName];
+				if (data.base64) {
+					// Decode the base64 string
+					var decodedBytes = system.base64Decode(data.contents);					
+
+					// Create an InputStream from the decoded byte array
+					var inputStream = new java.io.ByteArrayInputStream(decodedBytes);
+					
+					// Buffer to hold bytes for writing
+					var buffer = java.lang.reflect.Array.newInstance(java.lang.Byte.TYPE, 1024);
+					var len;
+					
+					// Read from inputStream and write to ZipOutputStream
+					while ((len = inputStream.read(buffer)) > 0) {
+					    zos.write(buffer, 0, len);
+					}				
+				} else {
+					zos.write(data.contents.getBytes());
+				}
+				
+				// Close the output stream
+				zos.closeEntry();
+			}
+			
+			zos.finish();
+			zos.close();
+		} catch(ex) {
+			throw "Error creating jar - " + ex;
+		}
+	}
+	
+	this.log = function(lvl, msg) {
+		if (typeof lvl == "undefined") {
+			lvl = "INFO";
+			msg = "";
+		} else
+		if (typeof msg == "undefined") {
+			msg = lvl;
+			lvl = "INFO";
+		}
+		task.logmsg(lvl, msg);
+		java.lang.System.out.println(lvl + " - " + msg);
+	}
+	
+	return this;
+}
+
+// Create a global variable to access this functionality
+_zipper = new _zipperObj();]]></parameter>
+                </Script>
+                <ALMap name="testInput">
+                    <InheritFrom>[no inheritance]</InheritFrom>
+                    <ModTime>1731014478987</ModTime>
+                    <AttributeMap name="Input">
+                        <InheritFrom>[parent]</InheritFrom>
+                        <AttributeMapItem>
+                            <Name>http.qs.configPath</Name>
+                            <Type>advanced</Type>
+                            <Script>"Y:\\___TDI\\SolDir\\TutProfile\\TutProfile.xml"</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.connectorName</Name>
+                            <Type>advanced</Type>
+                            <Script>"ManagedSystem"</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.debug</Name>
+                            <Type>advanced</Type>
+                            <Script>true</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.jarfilePath</Name>
+                            <Type>advanced</Type>
+                            <Script>"JarifyScriptConnector/ManagedSystem.jar"</Script>
+                        </AttributeMapItem>
+                    </AttributeMap>
+                    <State>Enabled</State>
+                </ALMap>
+                <Script name="DoIt">
+                    <ModTime>1731015476041</ModTime>
+                    <parameter name="script"><![CDATA[var ui = getUserInput(work);
+
+// First read in the Config to a DOM tree we can search and prune
+var domEntry = readAndParseConfig(ui.configPath);
+
+// Find the ScriptConnector specified in this Config
+var ctrEntry = findConnector(domEntry, ui.connectorName, ui.configPath);
+
+// Use the template under Resources/Scripts to start a new DOM tree
+// for 
+var tdiXMLentry = buildTemplateDOM();
+
+// Now attach the connector DOM tree to the template tdi.xml one
+// Add the Connector under the Folder node
+tdiXMLentry.getNodeList("//Folder").item(0).appendChild(ctrEntry.Connector);
+
+// Add the tdi.xl file to the list to add
+addEntry({
+	filepath: "tdi.xml",
+	contents: '<?xml version="1.0" encoding="UTF-8"?>\n' + tdiXMLentry.toXML(),
+	text: true
+});
+
+addEntry({
+	filepath: "cust/tdi/ScriptConnector.class", 
+	contents: system.getScriptText("ScriptConnector.class"),
+	base64: true
+});
+
+_zipper.log("Creating JAR file: " + ui.jarfilePath);
+try {
+	_zipper.zip(ui.configPath, ui.jarfilePath);
+} catch (ex) {
+	throw "Error creating archive: " + ex;
+}]]></parameter>
+                </Script>
+                <ALMap name="templateText">
+                    <InheritFrom>[no inheritance]</InheritFrom>
+                    <ModTime>1731015681261</ModTime>
+                    <AttributeMap name="Input">
+                        <InheritFrom>[parent]</InheritFrom>
+                        <AttributeMapItem>
+                            <Name>meta</Name>
+                            <Type>substitution</Type>
+                            <Script>work.meta</Script>
+                            <SubstitutionTemplate><![CDATA[Manifest-Version: 1.0
+TDI-Version: 7.2
+Created-By: chief storyteller]]></SubstitutionTemplate>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>nls</Name>
+                            <Type>substitution</Type>
+                            <Script><![CDATA[######################################################
+#  Resource Strings
+#
+# TRNOTE: 
+#
+#  cmvc_en_version_level=%I%,%S%,%E%,%U% 
+# Generic (Common) resource strings
+######################################################
+# NLS_MESSAGEFORMAT_NONE
+# NLS_ENCODING=UNICODE
+Connector.Title=]]></Script>
+                            <SubstitutionTemplate><![CDATA[######################################################
+#  Resource Strings
+#
+# TRNOTE: 
+#
+#  cmvc_en_version_level=%I%,%S%,%E%,%U% 
+# Generic (Common) resource strings
+######################################################
+# NLS_MESSAGEFORMAT_NONE
+# NLS_ENCODING=UNICODE
+Connector.Title=]]></SubstitutionTemplate>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>properties</Name>
+                            <Type>substitution</Type>
+                            <Script>SOME.ERROR.MSG=English message</Script>
+                            <SubstitutionTemplate>SOME.MESSAGE.OR.LABEL=Whatever you want</SubstitutionTemplate>
+                        </AttributeMapItem>
+                    </AttributeMap>
+                    <State>Enabled</State>
+                </ALMap>
+            </ContainerDF>
+            <ThreadOptions/>
+            <Operations/>
+            <InitParams>
+                <Schema name="AssemblyLineInitParams"/>
+            </InitParams>
+        </AssemblyLine>
+        <AssemblyLine name="jarifyScriptedConnector working 20241107 1540">
+            <ModTime>1731017940525</ModTime>
+            <Settings/>
+            <Hooks/>
+            <CheckpointConfig/>
+            <SandboxConfig/>
+            <SimulationConfig>
+                <SimulationStates>
+                    <Component name="Functions" state="Enabled"/>
+                    <Component name="testInput" state="Enabled"/>
+                    <Component name="testReadWriteBinary" state="Enabled"/>
+                    <Component name="DoIt" state="Enabled"/>
+                </SimulationStates>
+                <ProxySettings/>
+            </SimulationConfig>
+            <LogConfig/>
+            <ContainerEF name="EntryFeedContainer"/>
+            <ContainerDF name="DataFlowContainer">
+                <Script name="Functions">
+                    <ModTime>1730976812701</ModTime>
+                    <parameter name="script"><![CDATA[var __httpPath = ""; // Used for some errors
+var __xmlParser = system.getParser("ibmdi.XML2"); // For parsing xml
+var __files = {}; // The directory of the files in the jar file 
+
+function addFile(fileName, fileContents) {
+	__files[fileName] = fileContents;
+}
+
+function throwURLexception(exMsg, ex) {
+	if (typeof ex != "undefined") exMsg += "\n-> " + ex;
+	throw new java.net.MalformedURLException(exMsg + " - " + __httpPath)
+}
+
+function throwIOexception(exMsg, ex) {
+	if (typeof ex != "undefined") exMsg += "\n-> " + ex;
+	throw new java.net.IOException(exMsg);
+}
+
+// Get user input
+function getUserInput(entry) {
+	// set global __httpPath variable used by exception functions
+	__httpPath = entry.getString("http.path");
+	
+	// create obj with input from http base
+	var userInput = {
+		configPath : entry.getString("http.qs.configPath") 
+							|| throwURLexception("configPath not specified"),
+		connectorName : entry.getString("http.qs.connectorName") 
+							|| throwURLexception("Scripted connectorName not specified"),
+		jarfilePath : entry.getString("http.qs.jarfilePath") 
+							|| (entry.getString(http.qs.connectorName) + ".jar")
+	}
+
+	userInput.jarfilePath = getFullPathname(userInput.jarfilePath);
+
+	return userInput
+}
+
+// Read and parse the config file to a DOM tree 
+//  as implemented by Entry & Attribute for hierarchical data
+function readAndParseConfig(configPath) {
+	try {
+		// Open and read in config file
+		var xmlFile = system.openFileForInput(configPath);
+		var xml = "";
+		var line = "";
+		while ((line = xmlFile.readLine()) != null) {
+			xml += line;
+		}
+		
+		// Prepare to parse using the XML Parser
+
+		__xmlParser.setParam("entry.tag",null);
+		__xmlParser.setParam("value.tag",null);
+		__xmlParser.setInputStream(xml);
+		__xmlParser.initParser();
+		
+		// Parse the XML into a DOM Node tree
+		domEntry = __xmlParser.readEntry();
+		return domEntry;
+	} catch (ex) {
+		throwIOexception("Cannot parse config file: " + configPath, ex);
+	}
+}
+
+// Find the ScriptConnector node in the entry DOM tree
+function findConnector(domEntry, connectorName) {
+	// Use XPath search to find the named Connector
+	var xpath = "//Folder[@name='Connectors']/Connector[@name='" + connectorName + "']";
+	var ctr = domEntry.getNodeList(xpath).item(0);
+	if (ctr == null) {
+		throwURLexception("Could not find connector " + connectorName + " in " + configFilepath);
+	}
+	
+	// Ensure it is scripted
+	var inheritFrom = ctr.getElementsByTagName("InheritFrom").item(0).getValue();
+	if (inheritFrom != "system:/Connectors/ibmdi.ScriptConnector") {
+		throwURLexception("Connector is not a ScriptConnector: " + connectorName);
+	}
+	
+	//Now create a new DOM tree (entry) with this Connector at it root
+	var ctrEntry = system.newEntry();
+	ctrEntry.setAttribute(ctr.cloneNode(true)); // true = Deep node tree clone
+	
+	return ctrEntry;
+}
+
+// Build a DOM tree based on the template for the tdi.xml file
+function buildTemplateDOM() {
+	// Get template tdi.xml value
+	var tdiXMLstr = system.getScriptText("templateTDIxml");
+	
+	// Set today's date in it
+	var datePattern = "E MMM d HH:mm:ss z YYYY";
+	var dateFormatter = new java.text.SimpleDateFormat(datePattern);
+	var todaysDateStr = dateFormatter.format(new java.util.Date());
+	var startPos = tdiXMLstr.indexOf("MetamergeConfig created=\"");
+	var tdiXMLstr = tdiXMLstr.substring(0,startPos + 25)
+		+ todaysDateStr
+		+ tdiXMLstr.substring(tdiXMLstr.indexOf("\" version"));
+	
+	// Parse the XML to a DOM tree that we can add the Connector DOM to
+	__xmlParser.setInputStream(tdiXMLstr);
+	__xmlParser.initParser();
+	tdiXMLentry = __xmlParser.readEntry();
+
+	return tdiXMLentry;
+}
+
+function getFullPathname(filePath) {
+	// Get working dir (which is Solution Directory by default)
+	var soldir = java.lang.System.getProperty("user.dir");
+	
+	// Complete full pathname
+	var fullPathname = filePath;
+	if (!fullPathname.toLowerCase().startsWith(soldir.toLowerCase())) {
+		// Add leading backslash if missing
+		if (!fullPathname.startsWith("\\") && !fullPathname.startsWith("/")) {
+			fullPathname = soldir + "\\" + fullPathname;
+		} else {
+			fullPathname = soldir + fullPathname;
+		}
+	}
+	return fullPathname;
+}
+
+// Return the contents of a binary file (e.g. class file) as an ArrayList
+function readBinaryFile(filePath) {
+	filePath = filePath.trim();
+	var fullPathname = getFullPathname(filePath);
+	
+	var file = new java.io.File(fullPathname);
+	var encoded = java.util.Base64.getEncoder().encodeToString(java.nio.file.Files.readAllBytes(file.toPath()));
+	return encoded;
+	
+	// Left this old stuff in just in case
+	// Open an input stream
+	var inputStream = new java.io.FileInputStream(fullPathname);
+	var data;
+	var strBuff = new java.lang.StringBuffer();
+	// Read int values and append these to the string buffer
+	while ((data = inputStream.read()) != -1) {
+	    strBuff.append(data);
+	}
+	inputStream.close();
+	
+	return strBuff.toString();
+}
+
+// Write a binary file based on the passed 'contentsStr' string
+function writeBinaryFile(filePath, encoded) {
+	filePath = filePath.trim() + ".2";
+	var fullPathname = getFullPathname(filePath);
+	var decoded = java.util.Base64.getDecoder().decode(encoded);
+	// Write it to file with an output stream
+	var outputStream = new java.io.FileOutputStream(fullPathname);
+	var len = encoded.length;
+	for (var i in decoded) {
+		outputStream.write(i)
+	}
+	outputStream.close();
+	return true;
+}
+
+// Archive functions
+_zipperObj = function(useBuffer) {
+	this.BUFFER = useBuffer || 2048;
+	this.data = java.lang.reflect.Array.newInstance(java.lang.Byte.TYPE, this.BUFFER);
+
+	this.unzip = function(filePath) {
+		try {
+			this.log("-------");
+			this.log("Unzipping " + filePath);
+			var dest = null; // BufferedOutputStream 
+			var inf = new java.io.File(filePath);
+			if (!inf.exists()) {
+				throw "Input jar file does not exist: " + filePath;
+			}
+			var fis = new java.io.FileInputStream(filePath);
+			var zis = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(fis));
+			var entry; // ZipEntry
+			while ((entry = zis.getNextEntry()) != null) {
+				// write the files to the disk
+				var outf = new java.io.File(toFolder + entry.getName());
+				if (entry.isDirectory()) {
+					if (outf.mkdir()) {
+						this.log("Creating folder " + outf);
+					}
+				} else {
+					for (var parent = outf.getParentFile(); parent != null; parent = parent.getParentFile()) {
+						if (parent.mkdir()) {
+							this.log("Creating folder " + parent);							
+						}
+					}
+				}
+			}
+
+			zis.close();
+			fis = new java.io.FileInputStream(filePath);
+			zis = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(fis));
+			while ((entry = zis.getNextEntry()) != null) {
+				var count;
+				// write the files to the disk
+				outf = new java.io.File(toFolder + entry.getName());
+				if (!entry.isDirectory()) {
+					this.log("Extracting: " + entry.getName() + " method: " + entry.getMethod());
+					var fos = new java.io.FileOutputStream(toFolder + entry.getName());
+					var dest = new java.io.BufferedOutputStream(fos, this.BUFFER);
+					while ((count = zis.read(this.data, 0, this.BUFFER)) != -1) {
+						dest.write(this.data, 0, count);
+					}
+					dest.flush();
+					dest.close();
+				}
+			}
+			zis.close();
+		} catch (e) {
+			throw "Error unzipping - " +  e;
+		}
+	}
+	
+	this.zip = function(connectorName, zipFilePath, jarEntries) {
+		try {
+			var fos = new java.io.FileOutputStream(zipFilePath);
+			var entry;
+			var data;
+			
+			zos = new java.util.zip.ZipOutputStream(fos);
+			zos.setLevel(8);
+			
+			for (var entryName in jarEntries) {
+				useEntryName = entryName;
+				var parts = system.splitString(entryName, "/");
+				var folderName = "";
+
+				if (parts.length > 1) {
+					folderName = parts[0];
+					try {
+/*
+						entry = new java.util.zip.ZipEntry(folderName);
+						zos.putNextEntry(entry);
+						zos.closeEntry();
+						this.log("Adding folder " + folderName)
+*/
+					} catch (ex1) {
+						// It means the folderName is already there.
+						this.log("Error adding folder " + folderName + " - " + ex1)
+					}
+				}
+				
+			 	entry = new java.util.zip.ZipEntry(entryName); 
+				data = jarEntries[entryName];
+			
+				zos.putNextEntry(entry);
+				zos.write(data.getBytes());
+				zos.closeEntry();
+			}
+			
+			zos.finish();
+			zos.close();
+		} catch(ex) {
+			throw "Error creating jar - " + ex;
+		}
+	}
+	
+	this.log = function(lvl, msg) {
+		if (typeof lvl == "undefined") {
+			lvl = "INFO";
+			msg = "";
+		} else
+		if (typeof msg == "undefined") {
+			msg = lvl;
+			lvl = "INFO";
+		}
+		task.logmsg(lvl, msg);
+		java.lang.System.out.println(lvl + " - " + msg);
+	}
+	
+	return this;
+}
+
+// Create a global variable to access this functionality
+_zipper = new _zipperObj();]]></parameter>
+                </Script>
+                <ALMap name="testInput">
+                    <InheritFrom>[no inheritance]</InheritFrom>
+                    <ModTime>1730803923484</ModTime>
+                    <AttributeMap name="Input">
+                        <InheritFrom>[parent]</InheritFrom>
+                        <AttributeMapItem>
+                            <Name>http.qs.configPath</Name>
+                            <Type>advanced</Type>
+                            <Script>"Y:\\___TDI\\SolDir\\TutProfile\\TutProfile.xml"</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.connectorName</Name>
+                            <Type>advanced</Type>
+                            <Script>"ManagedSystem"</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.debug</Name>
+                            <Type>advanced</Type>
+                            <Script>true</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.jarfilePath</Name>
+                            <Type>advanced</Type>
+                            <Script>"JarifyScriptedConnector/ManagedSystem.jar"</Script>
+                        </AttributeMapItem>
+                    </AttributeMap>
+                    <State>Enabled</State>
+                </ALMap>
+                <Script name="testReadWriteBinary">
+                    <ModTime>1730972946836</ModTime>
+                    <parameter name="enabled">false</parameter>
+                    <parameter name="script"><![CDATA[var filePath = "\\JarifyScriptedConnector\\ScriptConnector.class";
+
+classStrRead = readBinaryFile(filePath);
+
+classStr = system.getScriptText("ScriptConnector.class");
+
+writeBinaryFile(filePath + "jarbinks", classStr);
+
+i = 42;]]></parameter>
+                </Script>
+                <Script name="DoIt">
+                    <ModTime>1730976511329</ModTime>
+                    <parameter name="script"><![CDATA[var ui = getUserInput(work);
+
+// First read in the Config to a DOM tree we can search and prune
+var domEntry = readAndParseConfig(ui.configPath);
+
+// Find the ScriptConnector specified in this Config
+var ctrEntry = findConnector(domEntry, ui.connectorName);
+
+// Use the template under Resources/Scripts to start a new DOM tree
+// for 
+var tdiXMLentry = buildTemplateDOM();
+
+// Now attach the connector DOM tree to the template tdi.xml one
+// Add the Connector under the Folder node
+tdiXMLentry.getNodeList("//Folder").item(0).appendChild(ctrEntry.Connector);
+
+// Add the tdi.xl file to the list to add
+addFile("tesT/tdi.xml", '<?xml version="1.0" encoding="UTF-8"?>\n' + tdiXMLentry.toXML());
+
+
+_zipper.log("Creating JAR file: " + ui.jarfilePath);
+try {
+	_zipper.zip(ui.connectorName, ui.jarfilePath, __files);
+} catch (ex) {
+	throw "Error creating archive: " + ex;
+}]]></parameter>
+                </Script>
+            </ContainerDF>
+            <ThreadOptions/>
+            <Operations/>
+            <InitParams>
+                <Schema name="AssemblyLineInitParams"/>
+            </InitParams>
+        </AssemblyLine>
+        <AssemblyLine name="jarifyScriptedConnector 20241107 1154">
+            <ModTime>1731017940603</ModTime>
+            <Settings/>
+            <Hooks/>
+            <CheckpointConfig/>
+            <SandboxConfig/>
+            <SimulationConfig>
+                <SimulationStates>
+                    <Component name="Functions" state="Enabled"/>
+                    <Component name="testInput" state="Enabled"/>
+                    <Component name="testReadWriteBinary" state="Enabled"/>
+                    <Component name="DoIt" state="Enabled"/>
+                </SimulationStates>
+                <ProxySettings/>
+            </SimulationConfig>
+            <LogConfig/>
+            <ContainerEF name="EntryFeedContainer"/>
+            <ContainerDF name="DataFlowContainer">
+                <Script name="Functions">
+                    <ModTime>1730976812701</ModTime>
+                    <parameter name="script"><![CDATA[var __httpPath = ""; // Used for some errors
+var __xmlParser = system.getParser("ibmdi.XML2"); // For parsing xml
+var __files = {}; // The directory of the files in the jar file 
+
+function addFile(fileName, fileContents) {
+	__files[fileName] = fileContents;
+}
+
+function throwURLexception(exMsg, ex) {
+	if (typeof ex != "undefined") exMsg += "\n-> " + ex;
+	throw new java.net.MalformedURLException(exMsg + " - " + __httpPath)
+}
+
+function throwIOexception(exMsg, ex) {
+	if (typeof ex != "undefined") exMsg += "\n-> " + ex;
+	throw new java.net.IOException(exMsg);
+}
+
+// Get user input
+function getUserInput(entry) {
+	// set global __httpPath variable used by exception functions
+	__httpPath = entry.getString("http.path");
+	
+	// create obj with input from http base
+	var userInput = {
+		configPath : entry.getString("http.qs.configPath") 
+							|| throwURLexception("configPath not specified"),
+		connectorName : entry.getString("http.qs.connectorName") 
+							|| throwURLexception("Scripted connectorName not specified"),
+		jarfilePath : entry.getString("http.qs.jarfilePath") 
+							|| (entry.getString(http.qs.connectorName) + ".jar")
+	}
+
+	userInput.jarfilePath = getFullPathname(userInput.jarfilePath);
+
+	return userInput
+}
+
+// Read and parse the config file to a DOM tree 
+//  as implemented by Entry & Attribute for hierarchical data
+function readAndParseConfig(configPath) {
+	try {
+		// Open and read in config file
+		var xmlFile = system.openFileForInput(configPath);
+		var xml = "";
+		var line = "";
+		while ((line = xmlFile.readLine()) != null) {
+			xml += line;
+		}
+		
+		// Prepare to parse using the XML Parser
+
+		__xmlParser.setParam("entry.tag",null);
+		__xmlParser.setParam("value.tag",null);
+		__xmlParser.setInputStream(xml);
+		__xmlParser.initParser();
+		
+		// Parse the XML into a DOM Node tree
+		domEntry = __xmlParser.readEntry();
+		return domEntry;
+	} catch (ex) {
+		throwIOexception("Cannot parse config file: " + configPath, ex);
+	}
+}
+
+// Find the ScriptConnector node in the entry DOM tree
+function findConnector(domEntry, connectorName) {
+	// Use XPath search to find the named Connector
+	var xpath = "//Folder[@name='Connectors']/Connector[@name='" + connectorName + "']";
+	var ctr = domEntry.getNodeList(xpath).item(0);
+	if (ctr == null) {
+		throwURLexception("Could not find connector " + connectorName + " in " + configFilepath);
+	}
+	
+	// Ensure it is scripted
+	var inheritFrom = ctr.getElementsByTagName("InheritFrom").item(0).getValue();
+	if (inheritFrom != "system:/Connectors/ibmdi.ScriptConnector") {
+		throwURLexception("Connector is not a ScriptConnector: " + connectorName);
+	}
+	
+	//Now create a new DOM tree (entry) with this Connector at it root
+	var ctrEntry = system.newEntry();
+	ctrEntry.setAttribute(ctr.cloneNode(true)); // true = Deep node tree clone
+	
+	return ctrEntry;
+}
+
+// Build a DOM tree based on the template for the tdi.xml file
+function buildTemplateDOM() {
+	// Get template tdi.xml value
+	var tdiXMLstr = system.getScriptText("templateTDIxml");
+	
+	// Set today's date in it
+	var datePattern = "E MMM d HH:mm:ss z YYYY";
+	var dateFormatter = new java.text.SimpleDateFormat(datePattern);
+	var todaysDateStr = dateFormatter.format(new java.util.Date());
+	var startPos = tdiXMLstr.indexOf("MetamergeConfig created=\"");
+	var tdiXMLstr = tdiXMLstr.substring(0,startPos + 25)
+		+ todaysDateStr
+		+ tdiXMLstr.substring(tdiXMLstr.indexOf("\" version"));
+	
+	// Parse the XML to a DOM tree that we can add the Connector DOM to
+	__xmlParser.setInputStream(tdiXMLstr);
+	__xmlParser.initParser();
+	tdiXMLentry = __xmlParser.readEntry();
+
+	return tdiXMLentry;
+}
+
+function getFullPathname(filePath) {
+	// Get working dir (which is Solution Directory by default)
+	var soldir = java.lang.System.getProperty("user.dir");
+	
+	// Complete full pathname
+	var fullPathname = filePath;
+	if (!fullPathname.toLowerCase().startsWith(soldir.toLowerCase())) {
+		// Add leading backslash if missing
+		if (!fullPathname.startsWith("\\") && !fullPathname.startsWith("/")) {
+			fullPathname = soldir + "\\" + fullPathname;
+		} else {
+			fullPathname = soldir + fullPathname;
+		}
+	}
+	return fullPathname;
+}
+
+// Return the contents of a binary file (e.g. class file) as an ArrayList
+function readBinaryFile(filePath) {
+	filePath = filePath.trim();
+	var fullPathname = getFullPathname(filePath);
+	
+	var file = new java.io.File(fullPathname);
+	var encoded = java.util.Base64.getEncoder().encodeToString(java.nio.file.Files.readAllBytes(file.toPath()));
+	return encoded;
+	
+	// Left this old stuff in just in case
+	// Open an input stream
+	var inputStream = new java.io.FileInputStream(fullPathname);
+	var data;
+	var strBuff = new java.lang.StringBuffer();
+	// Read int values and append these to the string buffer
+	while ((data = inputStream.read()) != -1) {
+	    strBuff.append(data);
+	}
+	inputStream.close();
+	
+	return strBuff.toString();
+}
+
+// Write a binary file based on the passed 'contentsStr' string
+function writeBinaryFile(filePath, encoded) {
+	filePath = filePath.trim() + ".2";
+	var fullPathname = getFullPathname(filePath);
+	var decoded = java.util.Base64.getDecoder().decode(encoded);
+	// Write it to file with an output stream
+	var outputStream = new java.io.FileOutputStream(fullPathname);
+	var len = encoded.length;
+	for (var i in decoded) {
+		outputStream.write(i)
+	}
+	outputStream.close();
+	return true;
+}
+
+// Archive functions
+_zipperObj = function(useBuffer) {
+	this.BUFFER = useBuffer || 2048;
+	this.data = java.lang.reflect.Array.newInstance(java.lang.Byte.TYPE, this.BUFFER);
+
+	this.unzip = function(filePath) {
+		try {
+			this.log("-------");
+			this.log("Unzipping " + filePath);
+			var dest = null; // BufferedOutputStream 
+			var inf = new java.io.File(filePath);
+			if (!inf.exists()) {
+				throw "Input jar file does not exist: " + filePath;
+			}
+			var fis = new java.io.FileInputStream(filePath);
+			var zis = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(fis));
+			var entry; // ZipEntry
+			while ((entry = zis.getNextEntry()) != null) {
+				// write the files to the disk
+				var outf = new java.io.File(toFolder + entry.getName());
+				if (entry.isDirectory()) {
+					if (outf.mkdir()) {
+						this.log("Creating folder " + outf);
+					}
+				} else {
+					for (var parent = outf.getParentFile(); parent != null; parent = parent.getParentFile()) {
+						if (parent.mkdir()) {
+							this.log("Creating folder " + parent);							
+						}
+					}
+				}
+			}
+
+			zis.close();
+			fis = new java.io.FileInputStream(filePath);
+			zis = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(fis));
+			while ((entry = zis.getNextEntry()) != null) {
+				var count;
+				// write the files to the disk
+				outf = new java.io.File(toFolder + entry.getName());
+				if (!entry.isDirectory()) {
+					this.log("Extracting: " + entry.getName() + " method: " + entry.getMethod());
+					var fos = new java.io.FileOutputStream(toFolder + entry.getName());
+					var dest = new java.io.BufferedOutputStream(fos, this.BUFFER);
+					while ((count = zis.read(this.data, 0, this.BUFFER)) != -1) {
+						dest.write(this.data, 0, count);
+					}
+					dest.flush();
+					dest.close();
+				}
+			}
+			zis.close();
+		} catch (e) {
+			throw "Error unzipping - " +  e;
+		}
+	}
+	
+	this.zip = function(connectorName, zipFilePath, jarEntries) {
+		try {
+			var fos = new java.io.FileOutputStream(zipFilePath);
+			var entry;
+			var data;
+			
+			zos = new java.util.zip.ZipOutputStream(fos);
+			zos.setLevel(8);
+			
+			for (var entryName in jarEntries) {
+				useEntryName = entryName;
+				var parts = system.splitString(entryName, "/");
+				var folderName = "";
+
+				if (parts.length > 1) {
+					folderName = parts[0];
+					try {
+/*
+						entry = new java.util.zip.ZipEntry(folderName);
+						zos.putNextEntry(entry);
+						zos.closeEntry();
+						this.log("Adding folder " + folderName)
+*/
+					} catch (ex1) {
+						// It means the folderName is already there.
+						this.log("Error adding folder " + folderName + " - " + ex1)
+					}
+				}
+				
+			 	entry = new java.util.zip.ZipEntry(entryName); 
+				data = jarEntries[entryName];
+			
+				zos.putNextEntry(entry);
+				zos.write(data.getBytes());
+				zos.closeEntry();
+			}
+			
+			zos.finish();
+			zos.close();
+		} catch(ex) {
+			throw "Error creating jar - " + ex;
+		}
+	}
+	
+	this.log = function(lvl, msg) {
+		if (typeof lvl == "undefined") {
+			lvl = "INFO";
+			msg = "";
+		} else
+		if (typeof msg == "undefined") {
+			msg = lvl;
+			lvl = "INFO";
+		}
+		task.logmsg(lvl, msg);
+		java.lang.System.out.println(lvl + " - " + msg);
+	}
+	
+	return this;
+}
+
+// Create a global variable to access this functionality
+_zipper = new _zipperObj();]]></parameter>
+                </Script>
+                <ALMap name="testInput">
+                    <InheritFrom>[no inheritance]</InheritFrom>
+                    <ModTime>1730803923484</ModTime>
+                    <AttributeMap name="Input">
+                        <InheritFrom>[parent]</InheritFrom>
+                        <AttributeMapItem>
+                            <Name>http.qs.configPath</Name>
+                            <Type>advanced</Type>
+                            <Script>"Y:\\___TDI\\SolDir\\TutProfile\\TutProfile.xml"</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.connectorName</Name>
+                            <Type>advanced</Type>
+                            <Script>"ManagedSystem"</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.debug</Name>
+                            <Type>advanced</Type>
+                            <Script>true</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.jarfilePath</Name>
+                            <Type>advanced</Type>
+                            <Script>"JarifyScriptedConnector/ManagedSystem.jar"</Script>
+                        </AttributeMapItem>
+                    </AttributeMap>
+                    <State>Enabled</State>
+                </ALMap>
+                <Script name="testReadWriteBinary">
+                    <ModTime>1730972946836</ModTime>
+                    <parameter name="enabled">false</parameter>
+                    <parameter name="script"><![CDATA[var filePath = "\\JarifyScriptedConnector\\ScriptConnector.class";
+
+classStrRead = readBinaryFile(filePath);
+
+classStr = system.getScriptText("ScriptConnector.class");
+
+writeBinaryFile(filePath + "jarbinks", classStr);
+
+i = 42;]]></parameter>
+                </Script>
+                <Script name="DoIt">
+                    <ModTime>1730976511329</ModTime>
+                    <parameter name="script"><![CDATA[var ui = getUserInput(work);
+
+// First read in the Config to a DOM tree we can search and prune
+var domEntry = readAndParseConfig(ui.configPath);
+
+// Find the ScriptConnector specified in this Config
+var ctrEntry = findConnector(domEntry, ui.connectorName);
+
+// Use the template under Resources/Scripts to start a new DOM tree
+// for 
+var tdiXMLentry = buildTemplateDOM();
+
+// Now attach the connector DOM tree to the template tdi.xml one
+// Add the Connector under the Folder node
+tdiXMLentry.getNodeList("//Folder").item(0).appendChild(ctrEntry.Connector);
+
+// Add the tdi.xl file to the list to add
+addFile("tesT/tdi.xml", '<?xml version="1.0" encoding="UTF-8"?>\n' + tdiXMLentry.toXML());
+
+
+_zipper.log("Creating JAR file: " + ui.jarfilePath);
+try {
+	_zipper.zip(ui.connectorName, ui.jarfilePath, __files);
+} catch (ex) {
+	throw "Error creating archive: " + ex;
+}]]></parameter>
+                </Script>
+            </ContainerDF>
+            <ThreadOptions/>
+            <Operations/>
+            <InitParams>
+                <Schema name="AssemblyLineInitParams"/>
+            </InitParams>
+        </AssemblyLine>
+        <AssemblyLine name="_useScriptedConnector">
+            <ModTime>1731017940555</ModTime>
+            <Settings/>
+            <Hooks/>
+            <CheckpointConfig/>
+            <SandboxConfig/>
+            <SimulationConfig>
+                <SimulationStates>
+                    <Component name="DumpWorkEntry" state="Enabled"/>
+                    <Component name="ScriptedConnector" state="Enabled"/>
+                </SimulationStates>
+                <ProxySettings/>
+            </SimulationConfig>
+            <LogConfig/>
+            <ContainerEF name="EntryFeedContainer">
+                <Connector name="ScriptedConnector">
+                    <InheritFrom>/Connectors/ScriptedConnector</InheritFrom>
+                    <ModTime>1730720516409</ModTime>
+                    <ConnectorMode>Iterator</ConnectorMode>
+                    <ConnectorState>Enabled</ConnectorState>
+                    <Configuration>
+                        <InheritFrom>[parent]</InheritFrom>
+                        <parameter name="max">10</parameter>
+                    </Configuration>
+                    <Parser>
+                        <InheritFrom>[parent]</InheritFrom>
+                    </Parser>
+                    <AttributeMap name="Input">
+                        <InheritFrom>[parent]</InheritFrom>
+                        <AttributeMapItem>
+                            <Name>counter</Name>
+                            <Type>simple</Type>
+                            <Simple>counter</Simple>
+                        </AttributeMapItem>
+                    </AttributeMap>
+                    <AttributeMap name="Output">
+                        <InheritFrom>[parent]</InheritFrom>
+                    </AttributeMap>
+                    <DeltaSettings>
+                        <WhenToCommit>After every database operation</WhenToCommit>
+                        <RowLocking>SERIALIZABLE</RowLocking>
+                        <ChangeDetectionMode>DETECT_ALL</ChangeDetectionMode>
+                    </DeltaSettings>
+                    <Schema name="Input">
+                        <InheritFrom>[parent]</InheritFrom>
+                    </Schema>
+                    <Schema name="Output">
+                        <InheritFrom>[parent]</InheritFrom>
+                    </Schema>
+                    <LinkCriteria>
+                        <InheritFrom>[parent]</InheritFrom>
+                    </LinkCriteria>
+                    <Hooks>
+                        <InheritFrom>[parent]</InheritFrom>
+                    </Hooks>
+                    <CheckpointConfig/>
+                    <SandboxConfig/>
+                    <Reconnect>
+                        <InheritFrom>[parent]</InheritFrom>
+                        <ReconnectRules/>
+                    </Reconnect>
+                    <Operations/>
+                    <PoolDefinition>
+                        <InheritFrom>[parent]</InheritFrom>
+                    </PoolDefinition>
+                    <PoolInstance/>
+                </Connector>
+            </ContainerEF>
+            <ContainerDF name="DataFlowContainer">
+                <Script name="DumpWorkEntry">
+                    <ModTime>1730718802038</ModTime>
+                    <parameter name="script"><![CDATA[// Dump the work entry
+task.dumpEntry(work);
+]]></parameter>
+                </Script>
+            </ContainerDF>
+            <ThreadOptions/>
+            <Operations/>
+            <InitParams>
+                <Schema name="AssemblyLineInitParams"/>
+            </InitParams>
+        </AssemblyLine>
+        <AssemblyLine name="_Read and write binary fine">
+            <ModTime>1731017940576</ModTime>
+            <Settings/>
+            <Hooks/>
+            <CheckpointConfig/>
+            <SandboxConfig/>
+            <SimulationConfig>
+                <SimulationStates>
+                    <Component name="Functions" state="Enabled"/>
+                    <Component name="Do it" state="Enabled"/>
+                </SimulationStates>
+                <ProxySettings/>
+            </SimulationConfig>
+            <LogConfig/>
+            <ContainerEF name="EntryFeedContainer"/>
+            <ContainerDF name="DataFlowContainer">
+                <Script name="Functions">
+                    <ModTime>1730992376780</ModTime>
+                    <parameter name="script"><![CDATA[// Return the contents of a binary file (e.g. class file) as an ArrayList
+function readBinaryFile(filePath) {
+	filePath = filePath.trim();
+	var fullPathname = getFullPathname(filePath);
+	
+	var file = new java.io.File(fullPathname);
+	var encoded = java.util.Base64.getEncoder().encodeToString(java.nio.file.Files.readAllBytes(file.toPath()));
+	return encoded;
+	
+	// Left this old stuff in just in case
+	// Open an input stream
+	var inputStream = new java.io.FileInputStream(fullPathname);
+	var data;
+	var strBuff = new java.lang.StringBuffer();
+	// Read int values and append these to the string buffer
+	while ((data = inputStream.read()) != -1) {
+	    strBuff.append(data);
+	}
+	inputStream.close();
+	
+	return strBuff.toString();
+}
+
+// Write a binary file based on the passed 'contentsStr' string
+function writeBinaryFile(filePath, encodedContent) {
+	filePath = filePath.trim() + ".2";
+	var fullPathname = getFullPathname(filePath);
+	var decoded = java.util.Base64.getDecoder().decode(encodedContent);
+	// Write it to file with an output stream
+	var outputStream = new java.io.FileOutputStream(fullPathname);
+	var len = encoded.length;
+	for (var i in decoded) {
+		outputStream.write(i)
+	}
+	outputStream.close();
+	return true;
+}]]></parameter>
+                </Script>
+                <Script name="Do it">
+                    <ModTime>1730992351046</ModTime>
+                    <parameter name="script"/>
+                </Script>
+            </ContainerDF>
+            <ThreadOptions/>
+            <Operations/>
+            <InitParams>
+                <Schema name="AssemblyLineInitParams"/>
+            </InitParams>
+        </AssemblyLine>
+        <AssemblyLine name="Relearn XML handling">
+            <ModTime>1731017940637</ModTime>
+            <Settings/>
+            <Hooks/>
+            <CheckpointConfig/>
+            <SandboxConfig/>
+            <SimulationConfig>
+                <SimulationStates>
+                    <Component name="Functions" state="Enabled"/>
+                    <Component name="zipperObj" state="Enabled"/>
+                    <Component name="testInput" state="Enabled"/>
+                    <Component name="DoIt" state="Enabled"/>
+                </SimulationStates>
+                <ProxySettings/>
+            </SimulationConfig>
+            <LogConfig/>
+            <ContainerEF name="EntryFeedContainer"/>
+            <ContainerDF name="DataFlowContainer">
+                <Script name="Functions">
+                    <ModTime>1730836876680</ModTime>
+                    <parameter name="script"><![CDATA[var __httpPath = ""; // Used for some errors
+var __xmlParser = system.getParser("ibmdi.XML2"); // For parsing xml
+var __files = {}; // The directory of the files in the jar file 
+
+function throwURLexception(exMsg) {
+	throw new java.net.MalformedURLException(exMsg + " - " + __httpPath)
+}
+
+function throwIOexception(exMsg) {
+	throw new java.net.IOException(exMsg)
+}
+
+// Get user input
+function getUserInput(entry) {
+	// set global __httpPath variable used by exception functions
+	__httpPath = entry.getString("http.path");
+	
+	// create obj with input from http base
+	var userInput = {
+		configPath : entry.getString("http.qs.configPath") 
+							|| throwURLexception("configPath not specified"),
+		connectorName : entry.getString("http.qs.connectorName") 
+							|| throwURLexception("Scripted connectorName not specified"),
+		jarfilePath : entry.getString("http.qs.jarfilePath") 
+							|| ("./" + entry.getString(http.qs.connectorName) + ".jar")
+	}
+
+	return userInput
+}
+
+// Read and parse the config file to a DOM tree 
+//  as implemented by Entry & Attribute for hierarchical data
+function readAndParseConfig(configPath) {
+	try {
+		// Open and read in config file
+		var xmlFile = system.openFileForInput(configPath);
+		var xml = "";
+		var line = "";
+		while ((line = xmlFile.readLine()) != null) {
+			xml += line;
+		}
+		
+		// Prepare to parse using the XML Parser
+
+		__xmlParser.setParam("entry.tag",null);
+		__xmlParser.setParam("value.tag",null);
+		__xmlParser.setInputStream(xml);
+		__xmlParser.initParser();
+		
+		// Parse the XML into a DOM Node tree
+		domEntry = __xmlParser.readEntry();
+		return domEntry;
+	} catch (ex) {
+		throwIOexception("Cannot parse config file: " + configPath)
+	}
+}
+
+// Find the ScriptConnector node in the entry DOM tree
+function findConnector(domEntry, connectorName) {
+	// Use XPath search to find the named Connector
+	var xpath = "//Folder[@name='Connectors']/Connector[@name='" + connectorName + "']";
+	var ctr = domEntry.getNodeList(xpath).item(0);
+	if (ctr == null) {
+		throw "Could not find connector " + connectorName + " in " + configFilepath;
+	}
+	
+	// Ensure it is scripted
+	var inheritFrom = ctr.getElementsByTagName("InheritFrom").item(0).getValue();
+	if (inheritFrom != "system:/Connectors/ibmdi.ScriptConnector") {
+		throw "Connector is not a ScriptConnector: " + connectorName;
+	}
+	
+	//Now create a new DOM tree (entry) with this Connector at it root
+	var ctrEntry = system.newEntry();
+	ctrEntry.setAttribute(ctr.cloneNode(true)); // true = Deep node tree clone
+	
+	return ctrEntry;
+}
+
+// Build a DOM tree based on the template for the tdi.xml file
+function buildTemplateDOM() {
+	// Get template tdi.xml value
+	var tdiXMLstr = system.getScriptText("templateTDIxml");
+	
+	// Set today's date in it
+	var datePattern = "E MMM d HH:mm:ss z YYYY";
+	var dateFormatter = new java.text.SimpleDateFormat(datePattern);
+	var todaysDateStr = dateFormatter.format(new java.util.Date());
+	var startPos = tdiXMLstr.indexOf("MetamergeConfig created=\"");
+	var tdiXMLstr = tdiXMLstr.substring(0,startPos + 25)
+		+ todaysDateStr
+		+ tdiXMLstr.substring(tdiXMLstr.indexOf("\" version"));
+	
+	// Parse the XML to a DOM tree that we can add the Connector DOM to
+	__xmlParser.setInputStream(tdiXMLstr);
+	__xmlParser.initParser();
+	tdiXMLentry = __xmlParser.readEntry();
+
+	return tdiXMLentry;
+}
+
+function addFile(fileName, fileContents) {
+	__files[fileName] = fileContents;
+}]]></parameter>
+                </Script>
+                <Script name="zipperObj">
+                    <InheritFrom>/Scripts/zipperObj</InheritFrom>
+                    <ModTime>1730836937465</ModTime>
+                </Script>
+                <ALMap name="testInput">
+                    <InheritFrom>[no inheritance]</InheritFrom>
+                    <ModTime>1730803923484</ModTime>
+                    <AttributeMap name="Input">
+                        <InheritFrom>[parent]</InheritFrom>
+                        <AttributeMapItem>
+                            <Name>http.qs.configPath</Name>
+                            <Type>advanced</Type>
+                            <Script>"Y:\\___TDI\\SolDir\\TutProfile\\TutProfile.xml"</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.connectorName</Name>
+                            <Type>advanced</Type>
+                            <Script>"ManagedSystem"</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.debug</Name>
+                            <Type>advanced</Type>
+                            <Script>true</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.jarfilePath</Name>
+                            <Type>advanced</Type>
+                            <Script>"JarifyScriptedConnector/ManagedSystem.jar"</Script>
+                        </AttributeMapItem>
+                    </AttributeMap>
+                    <State>Enabled</State>
+                </ALMap>
+                <Script name="DoIt">
+                    <ModTime>1730891495462</ModTime>
+                    <parameter name="script"><![CDATA[var ui = getUserInput(work);
+
+// First read in the Config to a DOM tree we can search and prune
+var domEntry = readAndParseConfig(ui.configPath);
+
+// Find the ScriptConnector specified in this Config
+var ctrEntry = findConnector(domEntry, ui.connectorName);
+
+// Use the template under Resources/Scripts to start a new DOM tree
+// for 
+var tdiXMLentry = buildTemplateDOM();
+
+// Now attach the connector DOM tree to the template tdi.xml one
+// Add the Connector under the Folder node
+tdiXMLentry.getNodeList("//Folder").item(0).appendChild(ctrEntry.Connector);
+
+// Add the tdi.xl file to the list to add
+addFile("tdi.xml", '<?xml version="1.0" encoding="UTF-8"?>\n' + tdiXMLentry.toXML());
+
+_zipper.log("Creating JAR file: " + ui.jarfilePath);
+try {
+	_zipper.zip(ui.jarfilePath, files);
+} catch (ex) {
+	errors.push(ex);
+}]]></parameter>
+                </Script>
+            </ContainerDF>
+            <ThreadOptions/>
+            <Operations/>
+            <InitParams>
+                <Schema name="AssemblyLineInitParams"/>
+            </InitParams>
+        </AssemblyLine>
+        <AssemblyLine name="Relearn XML handling 20041105 1312">
+            <ModTime>1731017940603</ModTime>
+            <Settings/>
+            <Hooks/>
+            <CheckpointConfig/>
+            <SandboxConfig/>
+            <SimulationConfig>
+                <SimulationStates>
+                    <Component name="testInput" state="Enabled"/>
+                    <Component name="Read in config" state="Enabled"/>
+                    <Component name="Verify Connector is found and ScriptConnector" state="Enabled"/>
+                    <Component name="Create new DOM for tdi xml file" state="Enabled"/>
+                    <Component name="Add connector to tdiDOM" state="Enabled"/>
+                </SimulationStates>
+                <ProxySettings/>
+            </SimulationConfig>
+            <LogConfig/>
+            <ContainerEF name="EntryFeedContainer"/>
+            <ContainerDF name="DataFlowContainer">
+                <ALMap name="testInput">
+                    <InheritFrom>[no inheritance]</InheritFrom>
+                    <ModTime>1730803923484</ModTime>
+                    <AttributeMap name="Input">
+                        <InheritFrom>[parent]</InheritFrom>
+                        <AttributeMapItem>
+                            <Name>http.qs.configPath</Name>
+                            <Type>advanced</Type>
+                            <Script>"Y:\\___TDI\\SolDir\\TutProfile\\TutProfile.xml"</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.connectorName</Name>
+                            <Type>advanced</Type>
+                            <Script>"ManagedSystem"</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.debug</Name>
+                            <Type>advanced</Type>
+                            <Script>true</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.jarfilePath</Name>
+                            <Type>advanced</Type>
+                            <Script>"JarifyScriptedConnector/ManagedSystem.jar"</Script>
+                        </AttributeMapItem>
+                    </AttributeMap>
+                    <State>Enabled</State>
+                </ALMap>
+                <Script name="Read in config">
+                    <ModTime>1730804471051</ModTime>
+                    <parameter name="script"><![CDATA[// Get user input
+var configPath = work.getString("http.qs.configPath");
+var connectorName = work.getString("http.qs.connectorName");
+var jarfilePath = work.getString("http.qs.jarfilePath");
+var debug = work["http.qs.debug"].getValue(0);
+
+// Open and read in config file
+var xmlFile = system.openFileForInput(configPath);
+var xml = "";
+var line = "";
+while ((line = xmlFile.readLine()) != null) {
+	xml += line;
+}
+
+// Prepare to parse using the XML Parser
+xmlParser = system.getParser("ibmdi.XML2");
+xmlParser.setParam("entry.tag",null);
+xmlParser.setParam("value.tag",null);
+xmlParser.setInputStream(xml);
+xmlParser.initParser();
+
+// Parse the XML into a DOM Node tree
+domEntry = xmlParser.readEntry();]]></parameter>
+                </Script>
+                <Script name="Verify Connector is found and ScriptConnector">
+                    <ModTime>1730808473884</ModTime>
+                    <parameter name="script"><![CDATA[// Use XPath search to find the named Connector
+var xpath = "//Folder[@name='Connectors']/Connector[@name='" + connectorName + "']";
+var ctr = domEntry.getNodeList(xpath).item(0);
+if (ctr == null) {
+	throw "Could not find connector " + connectorName + " in " + configFilepath;
+}
+
+// Ensure it is scripted
+var inheritFrom = ctr.getElementsByTagName("InheritFrom").item(0).getValue();
+if (inheritFrom != "system:/Connectors/ibmdi.ScriptConnector") {
+	throw "Connector is not a ScriptConnector: " + connectorName;
+}
+
+//Now create a new DOM tree (entry) with this Connector at it root
+var ctrEntry = system.newEntry();
+ctrEntry.setAttribute(ctr.cloneNode(true));
+
+if (debug) task.logmsg("\n\n-------------------------------\n\n" + ctrEntry.toXML());]]></parameter>
+                </Script>
+                <Script name="Create new DOM for tdi xml file">
+                    <ModTime>1730808221607</ModTime>
+                    <parameter name="script"><![CDATA[// Set up a new DOM tree with the template for the tdi.xml file the jar
+var tdiXMLstr = system.getScriptText("templateTDIxml");
+
+// Set today's date
+var datePattern = "E MMM d HH:mm:ss z YYYY";
+var dateFormatter = new java.text.SimpleDateFormat(datePattern);
+var todaysDateStr = dateFormatter.format(new java.util.Date());
+var startPos = tdiXMLstr.indexOf("MetamergeConfig created=\"");
+var tdiXMLstr = tdiXMLstr.substring(0,startPos + 25)
+	+ todaysDateStr
+	+ tdiXMLstr.substring(tdiXMLstr.indexOf("\" version"));
+
+// Parse the XML to a DOM tree that we can add the Connector DOM to
+xmlParser.setInputStream(tdiXMLstr);
+xmlParser.initParser();
+tdiXMLentry = xmlParser.readEntry();
+
+if (debug) {
+	task.logmsg("--------------\n\n" + tdiXMLentry.toXML());
+}]]></parameter>
+                </Script>
+                <Script name="Add connector to tdiDOM">
+                    <ModTime>1730808490320</ModTime>
+                    <parameter name="script"><![CDATA[// Add the Connector under the Folder node
+tdiXMLentry.getNodeList("//Folder").item(0).appendChild(ctrEntry.Connector);
+
+if (debug) {
+	task.logmsg("\n\n----------------------------\n\n\n" + tdiXMLentry.toXML())
+}]]></parameter>
+                </Script>
+            </ContainerDF>
+            <ThreadOptions/>
+            <Operations/>
+            <InitParams>
+                <Schema name="AssemblyLineInitParams"/>
+            </InitParams>
+        </AssemblyLine>
+        <AssemblyLine name="Read class file into string">
+            <ModTime>1731017940538</ModTime>
+            <Settings/>
+            <Hooks/>
+            <CheckpointConfig/>
+            <SandboxConfig/>
+            <SimulationConfig>
+                <SimulationStates>
+                    <Component name="Functions" state="Enabled"/>
+                    <Component name="Do it" state="Enabled"/>
+                </SimulationStates>
+                <ProxySettings/>
+            </SimulationConfig>
+            <LogConfig/>
+            <ContainerEF name="EntryFeedContainer"/>
+            <ContainerDF name="DataFlowContainer">
+                <Script name="Functions">
+                    <ModTime>1730927241916</ModTime>
+                    <parameter name="script"><![CDATA[function getFullPathname(filePath) {
+	// Get working dir (which is Solution Directory by default)
+	var soldir = java.lang.System.getProperty("user.dir");
+	
+	// Complete full pathname
+	var fullPathname = filePath;
+	if (!fullPathname.toLowerCase().startsWith(soldir.toLowerCase())) {
+		// Add leading backslash if missing
+		if (!fullPathname.startsWith("\\") && !fullPathname.startsWith("/")) {
+			fullPathname = soldir + "\\" + fullPathname;
+		} else {
+			fullPathname = soldir + fullPathname;
+		}
+	}
+	return fullPathname;
+}
+
+// Return the contents of a binary file (e.g. class file) as an ArrayList
+function readBinaryFile(filePath) {
+	filePath = filePath.trim();
+	var fullPathname = getFullPathname(filePath);
+	
+	var file = new java.io.File(fullPathname);
+	var encoded = java.util.Base64.getEncoder().encodeToString(java.nio.file.Files.readAllBytes(file.toPath()));
+	return encoded;
+	
+	// Left this old stuff in just in case
+	// Open an input stream
+	var inputStream = new java.io.FileInputStream(fullPathname);
+	var data;
+	var strBuff = new java.lang.StringBuffer();
+	// Read int values and append these to the string buffer
+	while ((data = inputStream.read()) != -1) {
+	    strBuff.append(data);
+	}
+	inputStream.close();
+	
+	return strBuff.toString();
+}
+
+// Write a binary file based on the passed 'contentsStr' string
+function writeBinaryFile(filePath, encoded) {
+	filePath = filePath.trim() + ".2";
+	var fullPathname = getFullPathname(filePath);
+	var decoded = java.util.Base64.getDecoder().decode(encoded);
+	// Write it to file with an output stream
+	var outputStream = new java.io.FileOutputStream(fullPathname);
+	var len = encoded.length;
+	for (var i in decoded) {
+		outputStream.write(i)
+	}
+	outputStream.close();
+	return true;
+}]]></parameter>
+                </Script>
+                <Script name="Do it">
+                    <ModTime>1730927682475</ModTime>
+                    <parameter name="script"><![CDATA[var filePath = "\\JarifyScriptedConnector\\ScriptConnector.class";
+
+classStrRead = readBinaryFile(filePath);
+
+classStr = system.getScriptText("ScriptConnector.class");
+
+writeBinaryFile(filePath + "jarbinks", classStr);
+
+i = 42;]]></parameter>
+                </Script>
+            </ContainerDF>
+            <ThreadOptions/>
+            <Operations/>
+            <InitParams>
+                <Schema name="AssemblyLineInitParams"/>
+            </InitParams>
+        </AssemblyLine>
+    </Folder>
+    <Folder name="Connectors">
+        <Connector name="ScriptedConnector">
+            <InheritFrom>system:/Connectors/ibmdi.ScriptConnector</InheritFrom>
+            <ModTime>1731017940542</ModTime>
+            <ConnectorMode>AddOnly</ConnectorMode>
+            <ConnectorState>Enabled</ConnectorState>
+            <Configuration>
+                <InheritFrom>[parent]</InheritFrom>
+                <parameter name="$form$"><![CDATA[<?xml version="1.0" encoding="UTF-8"?><MetamergeConfig Cycle="3" created="Mon Nov 04 12:10:10 CET 2024" createdBy="eddiehartman" main="Form" modified="Mon Nov 04 12:11:59 CET 2024" modifiedBy="eddiehartman" version="7.1.1">
+    <Form name="Form">
+        <ModTime>1730718716690</ModTime>
+        <FormItemNames>
+            <ListItem>$GLOBAL.script</ListItem>
+            <ListItem>keepGlobalState</ListItem>
+            <ListItem>$GLOBAL.includeFiles</ListItem>
+            <ListItem>includePrologs</ListItem>
+            <ListItem>$GLOBAL.debug</ListItem>
+            <ListItem>$GLOBAL.help</ListItem>
+            <ListItem>max</ListItem>
+        </FormItemNames>
+        <FormSectionNames>
+            <ListItem>General</ListItem>
+            <ListItem>Advanced</ListItem>
+        </FormSectionNames>
+        <FormItem name="includePrologs">
+            <parameter name="description">pro_desc</parameter>
+            <parameter name="label">pro_label</parameter>
+            <parameter name="script">selectGlobalProlog</parameter>
+            <parameter name="scriptLabel">pro_script_label</parameter>
+            <parameter name="scripthelp">pro_script_help</parameter>
+            <parameter name="syntax">textarea</parameter>
+        </FormItem>
+        <FormItem name="keepGlobalState">
+            <parameter name="description">SCRIPT_CONN_KEEP_GLOBAL_STATE_DESC</parameter>
+            <parameter name="label">SCRIPT_CONN_KEEP_GLOBAL_STATE_LABEL</parameter>
+            <parameter name="syntax">boolean</parameter>
+        </FormItem>
+        <FormItem name="max">
+            <ModTime>1730718716690</ModTime>
+            <parameter name="label">Max iterations</parameter>
+            <parameter name="modes"/>
+            <parameter name="syntax">string</parameter>
+        </FormItem>
+        <FormSection name="Advanced">
+            <FormSectionNames>
+                <ListItem>keepGlobalState</ListItem>
+                <ListItem>$GLOBAL.includeFiles</ListItem>
+                <ListItem>includePrologs</ListItem>
+                <ListItem>$GLOBAL.debug</ListItem>
+                <ListItem>$GLOBAL.userComment</ListItem>
+            </FormSectionNames>
+            <parameter name="initiallyExpanded">false</parameter>
+            <parameter name="title">Advanced</parameter>
+        </FormSection>
+        <FormSection name="General">
+            <FormSectionNames>
+                <ListItem>$GLOBAL.script</ListItem>
+                <ListItem>max</ListItem>
+            </FormSectionNames>
+        </FormSection>
+        <parameter name="title">CONN_TITLE</parameter>
+        <TranslationFile>NLS/idi_conn_scriptconn</TranslationFile>
+    </Form>
+</MetamergeConfig>]]></parameter>
+                <parameter name="includeFiles"/>
+                <parameter name="script"><![CDATA[// Sample connector
+// Place initialization code before function declarations
+//
+var counter = 0;
+var maxParam = connector.getParam("max");
+try {
+	var max = system.toInt(maxParam);
+} catch (ex) {
+	task.logmsg("Invalid parameter value for Max count: " + maxParam);
+	throw ex;
+}
+
+function selectEntries()
+{
+	counter = 0;
+}
+
+function getNextEntry ()
+{
+	if (counter > max) {
+		result.setStatus (0);
+		result.setMessage ("End of input");
+		return;
+	}
+
+	entry.setAttribute ("counter", counter);
+	counter++;
+}
+
+function putEntry ()
+{
+}
+
+function modEntry ()
+{
+}
+
+function deleteEntry ()
+{
+}
+
+function findEntry ()
+{
+}
+
+function querySchema ()
+{
+	var e = new com.ibm.di.entry.Entry();
+	e.addAttributeValue("name","counter");
+	e.addAttributeValue("syntax","Number");
+	list.add(e);
+	result.setStatus (1);
+}
+]]></parameter>
+            </Configuration>
+            <Parser>
+                <InheritFrom>[parent]</InheritFrom>
+            </Parser>
+            <AttributeMap name="Input">
+                <InheritFrom>[parent]</InheritFrom>
+            </AttributeMap>
+            <AttributeMap name="Output">
+                <InheritFrom>[parent]</InheritFrom>
+            </AttributeMap>
+            <DeltaSettings/>
+            <Schema name="Input">
+                <InheritFrom>[parent]</InheritFrom>
+            </Schema>
+            <Schema name="Output">
+                <InheritFrom>[parent]</InheritFrom>
+            </Schema>
+            <LinkCriteria>
+                <InheritFrom>[parent]</InheritFrom>
+            </LinkCriteria>
+            <Hooks>
+                <InheritFrom>[parent]</InheritFrom>
+            </Hooks>
+            <CheckpointConfig/>
+            <SandboxConfig/>
+            <Reconnect>
+                <InheritFrom>[parent]</InheritFrom>
+                <ReconnectRules/>
+            </Reconnect>
+            <Operations/>
+            <PoolDefinition>
+                <InheritFrom>[parent]</InheritFrom>
+                <Enabled>false</Enabled>
+                <MinPoolSize>0</MinPoolSize>
+                <MaxPoolSize>0</MaxPoolSize>
+                <PurgeInterval>0</PurgeInterval>
+                <InitializeAttempts>1</InitializeAttempts>
+                <InitializeSleepInterval>0</InitializeSleepInterval>
+            </PoolDefinition>
+            <PoolInstance/>
+        </Connector>
+    <Connector name="JDBCConnector">
+            <InheritFrom>system:/Connectors/ibmdi.JDBC</InheritFrom>
+            <ModTime>1731055214668</ModTime>
+            <ConnectorMode>AddOnly</ConnectorMode>
+            <ConnectorState>Enabled</ConnectorState>
+            <Configuration>
+                <InheritFrom>[parent]</InheritFrom>
+                <ModTime>1731055205746</ModTime>
+            </Configuration>
+            <Parser>
+                <InheritFrom>[parent]</InheritFrom>
+                <ModTime>1731055205746</ModTime>
+            </Parser>
+            <AttributeMap name="Input">
+                <InheritFrom>[parent]</InheritFrom>
+                <ModTime>1731055205746</ModTime>
+            </AttributeMap>
+            <AttributeMap name="Output">
+                <InheritFrom>[parent]</InheritFrom>
+                <ModTime>1731055205746</ModTime>
+            </AttributeMap>
+            <DeltaSettings/>
+            <Schema name="Input">
+                <InheritFrom>[parent]</InheritFrom>
+                <ModTime>1731055205746</ModTime>
+            </Schema>
+            <Schema name="Output">
+                <InheritFrom>[parent]</InheritFrom>
+                <ModTime>1731055205746</ModTime>
+            </Schema>
+            <LinkCriteria>
+                <InheritFrom>[parent]</InheritFrom>
+                <ModTime>1731055205746</ModTime>
+            </LinkCriteria>
+            <Hooks>
+                <InheritFrom>[parent]</InheritFrom>
+                <ModTime>1731055205746</ModTime>
+            </Hooks>
+            <CheckpointConfig/>
+            <SandboxConfig/>
+            <Reconnect>
+                <InheritFrom>[parent]</InheritFrom>
+                <ReconnectRules/>
+            </Reconnect>
+            <Operations/>
+            <PoolDefinition>
+                <InheritFrom>[parent]</InheritFrom>
+            </PoolDefinition>
+            <PoolInstance/>
+        </Connector>
+    </Folder>
+    <Folder name="Parsers"/>
+    <Folder name="Scripts">
+        <Script name="zipperObj">
+            <ModTime>1731017940555</ModTime>
+            <parameter name="includeFiles"/>
+            <parameter name="script"><![CDATA[_zipperObj = function(useBuffer) {
+	this.BUFFER = useBuffer || 2048;
+	this.data = java.lang.reflect.Array.newInstance(java.lang.Byte.TYPE, this.BUFFER);
+
+	this.unzip = function(filePath) {
+		try {
+			this.log("-------");
+			this.log("Unzipping " + filePath);
+			var dest = null; // BufferedOutputStream 
+			var inf = new java.io.File(filePath);
+			if (!inf.exists()) {
+				throw "Input jar file does not exist: " + filePath;
+			}
+			var fis = new java.io.FileInputStream(filePath);
+			var zis = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(fis));
+			var entry; // ZipEntry
+			while ((entry = zis.getNextEntry()) != null) {
+				// write the files to the disk
+				var outf = new java.io.File(toFolder + entry.getName());
+				if (entry.isDirectory()) {
+					if (outf.mkdir()) {
+						this.log("Creating folder " + outf);
+					}
+				} else {
+					for (var parent = outf.getParentFile(); parent != null; parent = parent.getParentFile()) {
+						if (parent.mkdir()) {
+							this.log("Creating folder " + parent);							
+						}
+					}
+				}
+			}
+
+			zis.close();
+			fis = new java.io.FileInputStream(filePath);
+			zis = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(fis));
+			while ((entry = zis.getNextEntry()) != null) {
+				var count;
+				// write the files to the disk
+				outf = new java.io.File(toFolder + entry.getName());
+				if (!entry.isDirectory()) {
+					this.log("Extracting: " + entry.getName() + " method: " + entry.getMethod());
+					var fos = new java.io.FileOutputStream(toFolder + entry.getName());
+					var dest = new java.io.BufferedOutputStream(fos, this.BUFFER);
+					while ((count = zis.read(this.data, 0, this.BUFFER)) != -1) {
+						dest.write(this.data, 0, count);
+					}
+					dest.flush();
+					dest.close();
+				}
+			}
+			zis.close();
+		} catch (e) {
+			throw "Error unzipping - " +  e;
+		}
+	}
+	
+	this.zip = function(connectorName, zipFilePath, contents) {
+		try {
+			var fos = new java.io.FileOutputStream(zipFilePath);
+			zos = new java.util.zip.ZipOutputStream(fos);
+			zos.setLevel(8);
+			
+			var entry = new java.util.zip.ZipEntry(connectorName + "/");
+			zos.putNextEntry(entry);
+			zos.closeEntry();
+		
+			for (var entryName in files) {
+				var entry = new java.util.zip.ZipEntry(connectorName + "/" + entryName); 
+				var data = files[entryName];
+			
+				zos.putNextEntry(entry);
+				zos.write(data.getBytes());
+				zos.closeEntry();
+			}
+			
+			zos.finish();
+			zos.close();
+		} catch(ex) {
+			throw "Error creating jar - " + ex;
+		}
+	}
+	
+	this.log = function(lvl, msg) {
+		if (typeof lvl == "undefined") {
+			lvl = "INFO";
+			msg = "";
+		} else
+		if (typeof msg == "undefined") {
+			msg = lvl;
+			lvl = "INFO";
+		}
+		task.logmsg(lvl, msg);
+		java.lang.System.out.println(lvl + " - " + msg);
+	}
+	
+	return this;
+}
+
+_zipper = new _zipperObj();]]></parameter>
+        </Script>
+        <Script name="templateTDIxml">
+            <ModTime>1731017940621</ModTime>
+            <parameter name="includeFiles"/>
+            <parameter name="script"><![CDATA[<?xml version="1.0" encoding="UTF-8"?>
+<MetamergeConfig created="Tue Oct 22 09:55:21 CEST 2013" version="7.1.1">
+  <Folder name="Connectors">
+  </Folder>
+</MetamergeConfig>]]></parameter>
+        </Script>
+        <Script name="propertiesTemplate">
+            <ModTime>1731017940589</ModTime>
+            <parameter name="includeFiles"/>
+            <parameter name="script">SOME.ERROR.MSG=English message</parameter>
+        </Script>
+        <Script name="nlsTemplate">
+            <ModTime>1731017940603</ModTime>
+            <parameter name="includeFiles"/>
+            <parameter name="script"><![CDATA[######################################################
+#  Resource Strings
+#
+# TRNOTE: 
+#
+#  cmvc_en_version_level=%I%,%S%,%E%,%U% 
+# Generic (Common) resource strings
+######################################################
+# NLS_MESSAGEFORMAT_NONE
+# NLS_ENCODING=UNICODE
+Advanced=Advanced
+Connector.Title=]]></parameter>
+        </Script>
+        <Script name="metaStuff">
+            <ModTime>1731017940621</ModTime>
+            <parameter name="includeFiles"/>
+            <parameter name="script"><![CDATA[Manifest-Version: 1.0
+TDI-Version: 7.2
+Created-By: chief storyteller]]></parameter>
+        </Script>
+        <Script name="jarifyFunctions">
+            <ModTime>1731017940621</ModTime>
+            <parameter name="enabled">true</parameter>
+            <parameter name="script"><![CDATA[var __httpPath = ""; // Used for some errors
+var __xmlParser = system.getParser("ibmdi.XML2"); // For parsing xml
+var __files = {}; // The directory of the files in the jar file 
+
+function addFile(fileName, fileContents) {
+	__files[fileName] = fileContents;
+}
+
+function throwURLexception(exMsg, ex) {
+	if (typeof ex != "undefined") exMsg += "\n-> " + ex;
+	throw new java.net.MalformedURLException(exMsg + " - " + __httpPath)
+}
+
+function throwIOexception(exMsg, ex) {
+	if (typeof ex != "undefined") exMsg += "\n-> " + ex;
+	throw new java.net.IOException(exMsg);
+}
+
+// Get user input
+function getUserInput(entry) {
+	// set global __httpPath variable used by exception functions
+	__httpPath = entry.getString("http.path");
+	
+	// create obj with input from http base
+	var userInput = {
+		configPath : entry.getString("http.qs.configPath") 
+							|| throwURLexception("configPath not specified"),
+		connectorName : entry.getString("http.qs.connectorName") 
+							|| throwURLexception("Scripted connectorName not specified"),
+		jarfilePath : entry.getString("http.qs.jarfilePath") 
+							|| (entry.getString(http.qs.connectorName) + ".jar")
+	}
+
+	userInput.jarfilePath = getFullPathname(userInput.jarfilePath);
+	userInput.internalName = "com.tdi." + (userInput.connectorName || "NotSpecified").toLowerCase();
+
+	return userInput
+}
+
+// Read and parse the config file to a DOM tree 
+//  as implemented by Entry & Attribute for hierarchical data
+function readAndParseConfig(configPath) {
+	try {
+		// Open and read in config file
+		var xmlFile = system.openFileForInput(configPath);
+		var xml = "";
+		var line = "";
+		while ((line = xmlFile.readLine()) != null) {
+			xml += line;
+		}
+		
+		// Prepare to parse using the XML Parser
+
+		__xmlParser.setParam("entry.tag",null);
+		__xmlParser.setParam("value.tag",null);
+		__xmlParser.setInputStream(xml);
+		__xmlParser.initParser();
+		
+		// Parse the XML into a DOM Node tree
+		domEntry = __xmlParser.readEntry();
+		return domEntry;
+	} catch (ex) {
+		throwIOexception("Cannot parse config file: " + configPath, ex);
+	}
+}
+
+// Find the ScriptConnector node in the entry DOM tree
+function findConnector(domEntry, connectorName) {
+	// Use XPath search to find the named Connector
+	var xpath = "//Folder[@name='Connectors']/Connector[@name='" + connectorName + "']";
+	var ctr = domEntry.getNodeList(xpath).item(0);
+	if (ctr == null) {
+		throwURLexception("Could not find connector " + connectorName + " in " + configFilepath);
+	}
+	
+	// Ensure it is scripted
+	var inheritFrom = ctr.getElementsByTagName("InheritFrom").item(0).getValue();
+	if (inheritFrom != "system:/Connectors/ibmdi.ScriptConnector") {
+		throwURLexception("Connector is not a ScriptConnector: " + connectorName);
+	}
+	
+	//Now create a new DOM tree (entry) with this Connector at it root
+	var ctrEntry = system.newEntry();
+	ctrEntry.setAttribute(ctr.cloneNode(true)); // true = Deep node tree clone
+	
+	return ctrEntry;
+}
+
+// Build a DOM tree based on the template for the tdi.xml file
+function buildTemplateDOM() {
+	// Get template tdi.xml value
+	var tdiXMLstr = system.getScriptText("templateTDIxml");
+	
+	// Set today's date in it
+	var datePattern = "E MMM d HH:mm:ss z YYYY";
+	var dateFormatter = new java.text.SimpleDateFormat(datePattern);
+	var todaysDateStr = dateFormatter.format(new java.util.Date());
+	var startPos = tdiXMLstr.indexOf("MetamergeConfig created=\"");
+	var tdiXMLstr = tdiXMLstr.substring(0,startPos + 25)
+		+ todaysDateStr
+		+ tdiXMLstr.substring(tdiXMLstr.indexOf("\" version"));
+	
+	// Parse the XML to a DOM tree that we can add the Connector DOM to
+	__xmlParser.setInputStream(tdiXMLstr);
+	__xmlParser.initParser();
+	tdiXMLentry = __xmlParser.readEntry();
+
+	return tdiXMLentry;
+}
+
+function getFullPathname(filePath) {
+	// Get working dir (which is Solution Directory by default)
+	var soldir = java.lang.System.getProperty("user.dir");
+	
+	// Complete full pathname
+	var fullPathname = filePath;
+	if (!fullPathname.toLowerCase().startsWith(soldir.toLowerCase())) {
+		// Add leading backslash if missing
+		if (!fullPathname.startsWith("\\") && !fullPathname.startsWith("/")) {
+			fullPathname = soldir + "\\" + fullPathname;
+		} else {
+			fullPathname = soldir + fullPathname;
+		}
+	}
+	return fullPathname;
+}
+
+// Return the contents of a binary file (e.g. class file) as an ArrayList
+function readBinaryFile(filePath) {
+	filePath = filePath.trim();
+	var fullPathname = getFullPathname(filePath);
+	
+	var file = new java.io.File(fullPathname);
+	var encoded = java.util.Base64.getEncoder().encodeToString(java.nio.file.Files.readAllBytes(file.toPath()));
+	return encoded;
+	
+	// Left this old stuff in just in case
+	// Open an input stream
+	var inputStream = new java.io.FileInputStream(fullPathname);
+	var data;
+	var strBuff = new java.lang.StringBuffer();
+	// Read int values and append these to the string buffer
+	while ((data = inputStream.read()) != -1) {
+	    strBuff.append(data);
+	}
+	inputStream.close();
+	
+	return strBuff.toString();
+}
+
+// Write a binary file based on the passed 'contentsStr' string
+function writeBinaryFile(filePath, encoded) {
+	filePath = filePath.trim() + ".2";
+	var fullPathname = getFullPathname(filePath);
+	var decoded = java.util.Base64.getDecoder().decode(encoded);
+	// Write it to file with an output stream
+	var outputStream = new java.io.FileOutputStream(fullPathname);
+	var len = encoded.length;
+	for (var i in decoded) {
+		outputStream.write(i)
+	}
+	outputStream.close();
+	return true;
+}
+
+// Archive functions
+_zipperObj = function(useBuffer) {
+	this.BUFFER = useBuffer || 2048;
+	this.data = java.lang.reflect.Array.newInstance(java.lang.Byte.TYPE, this.BUFFER);
+
+	this.unzip = function(filePath) {
+		try {
+			this.log("-------");
+			this.log("Unzipping " + filePath);
+			var dest = null; // BufferedOutputStream 
+			var inf = new java.io.File(filePath);
+			if (!inf.exists()) {
+				throw "Input jar file does not exist: " + filePath;
+			}
+			var fis = new java.io.FileInputStream(filePath);
+			var zis = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(fis));
+			var entry; // ZipEntry
+			while ((entry = zis.getNextEntry()) != null) {
+				// write the files to the disk
+				var outf = new java.io.File(toFolder + entry.getName());
+				if (entry.isDirectory()) {
+					if (outf.mkdir()) {
+						this.log("Creating folder " + outf);
+					}
+				} else {
+					for (var parent = outf.getParentFile(); parent != null; parent = parent.getParentFile()) {
+						if (parent.mkdir()) {
+							this.log("Creating folder " + parent);							
+						}
+					}
+				}
+			}
+
+			zis.close();
+			fis = new java.io.FileInputStream(filePath);
+			zis = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(fis));
+			while ((entry = zis.getNextEntry()) != null) {
+				var count;
+				// write the files to the disk
+				outf = new java.io.File(toFolder + entry.getName());
+				if (!entry.isDirectory()) {
+					this.log("Extracting: " + entry.getName() + " method: " + entry.getMethod());
+					var fos = new java.io.FileOutputStream(toFolder + entry.getName());
+					var dest = new java.io.BufferedOutputStream(fos, this.BUFFER);
+					while ((count = zis.read(this.data, 0, this.BUFFER)) != -1) {
+						dest.write(this.data, 0, count);
+					}
+					dest.flush();
+					dest.close();
+				}
+			}
+			zis.close();
+		} catch (e) {
+			throw "Error unzipping - " +  e;
+		}
+	}
+	
+	this.zip = function(connectorName, zipFilePath, jarEntries) {
+		try {
+			var fos = new java.io.FileOutputStream(zipFilePath);
+			var entry;
+			var data;
+			
+			zos = new java.util.zip.ZipOutputStream(fos);
+			zos.setLevel(8);
+			
+			for (var entryName in jarEntries) {
+				useEntryName = entryName;
+				
+			 	entry = new java.util.zip.ZipEntry(entryName); 
+				data = jarEntries[entryName];
+			
+				zos.putNextEntry(entry);
+				zos.write(data.getBytes());
+				zos.closeEntry();
+			}
+			
+			zos.finish();
+			zos.close();
+		} catch(ex) {
+			throw "Error creating jar - " + ex;
+		}
+	}
+	
+	this.log = function(lvl, msg) {
+		if (typeof lvl == "undefined") {
+			lvl = "INFO";
+			msg = "";
+		} else
+		if (typeof msg == "undefined") {
+			msg = lvl;
+			lvl = "INFO";
+		}
+		task.logmsg(lvl, msg);
+		java.lang.System.out.println(lvl + " - " + msg);
+	}
+	
+	return this;
+}
+
+// Create a global variable to access this functionality
+_zipper = new _zipperObj();]]></parameter>
+        </Script>
+        <Script name="fromChat">
+            <ModTime>1731017940571</ModTime>
+            <parameter name="enabled">false</parameter>
+            <parameter name="script"><![CDATA[// Import necessary Java classes using full paths for TDI compatibility
+var ByteArrayInputStream = Packages.java.io.ByteArrayInputStream;
+var ZipEntry = Packages.java.util.zip.ZipEntry;
+var ZipOutputStream = Packages.java.util.zip.ZipOutputStream;
+var Base64 = Packages.java.util.Base64;
+
+// Retrieve the base64 encoded string from the resource script 'ScriptConnector.class'
+var encodedString = system.getResource("ScriptConnector.class");
+
+// Decode the base64 string
+var decodedBytes = Base64.getDecoder().decode(encodedString);
+
+// Create an InputStream from the decoded byte array
+var inputStream = new ByteArrayInputStream(decodedBytes);
+
+// Define the name for the entry to be added in the zip file
+var zipEntryName = "ScriptConnector.class";
+var zipEntry = new ZipEntry(zipEntryName);
+
+// Add the entry to the ZipOutputStream (assuming ZipOutputStream is already open)
+ZipOutputStream.putNextEntry(zipEntry);
+
+// Buffer to hold bytes for writing
+var buffer = java.lang.reflect.Array.newInstance(java.lang.Byte.TYPE, 1024);
+var len;
+
+// Read from inputStream and write to ZipOutputStream
+while ((len = inputStream.read(buffer)) > 0) {
+    ZipOutputStream.write(buffer, 0, len);
+}
+
+// Close the current entry in the ZipOutputStream
+ZipOutputStream.closeEntry();
+
+// Close the InputStream to release resources
+inputStream.close();]]></parameter>
+        </Script>
+        <Script name="ScriptConnector.class">
+            <ModTime>1731017940555</ModTime>
+            <parameter name="includeFiles"/>
+            <parameter name="script">yv66vgAAADQBcAcAywoAcwDMBwDNCgADAMwJAAYAzgcAzwgA0AoABgDRCACUCgDSANMIAJgKAAYA1AoA1QDWCgDVANcJAAYA2AoABgDZCQAGANoIANsKAHAA3AoABgDdCADeCgADAN8HAOAKACkA4QoAKQDiCgAbAOMHAOQHAOUIAOYKABsA5woAcADoCgAcAOkKANIA6ggA6woABgDsCgAGAO0HAO4IAO8KACUA7AoAJQDwBwDxCADyCgAGAPMKACkA9AoAKQD1CAD2CgApAPcIAPgKAAYA+QgA+goAKQD7BwD8CAD9BwD+CgA2AMwKADYA/wgBAAoANgEBCgECAQMIAQQKAQUBBgoAKQEHCAEIBwEJCAEKCgBAAQsKAEABDAoAQAENCgApAQ4IAQ8IARAKAQUBEQcBEgsASQETCgApARQIARUKAAYBFggBFwoABgEYCAEZCgApARoIAKsKANIBGwoAKQEcCgDSAR0IAKwIAK4KACkBHggBHwgAsggAsAgBIAgAtQgBIQoABgEiCAC2CAEjCAC3CAEkCAC5CAElCAC7CAEmCAC9BwEnCgBpAMwIAMAIAMEIAL4IASgIASkHASoIASsKAHAA6QcBLAcBLQEACUNPUFlSSUdIVAEAEkxqYXZhL2xhbmcvU3RyaW5nOwEADUNvbnN0YW50VmFsdWUIAS4BAA9QUk9QRVJUSUVTX0ZJTEUBABFLRUVQX0dMT0JBTF9TVEFURQEABmVuZ2luZQEAIExjb20vaWJtL2RpL3NjcmlwdC9TY3JpcHRFbmdpbmU7AQAGbXlOYW1lAQAIc1Jlc0hhc2gBACBMY29tL2libS9kaS9zZXJ2ZXIvUmVzb3VyY2VIYXNoOwEADHNjcmlwdE9iamVjdAEAGExjb20vaWJtL2RpL2VudHJ5L0VudHJ5OwEACEZVTkNUSU9OAQAKSU5JVElBTElaRQEADlNFTEVDVF9FTlRSSUVTAQAOR0VUX05FWFRfRU5UUlkBAAlNT0RfRU5UUlkBAAxERUxFVEVfRU5UUlkBAApGSU5EX0VOVFJZAQAJUFVUX0VOVFJZAQALUVVFUllfUkVQTFkBAAlURVJNSU5BVEUBAAxRVUVSWV9TQ0hFTUEBAAY8aW5pdD4BAAMoKVYBAARDb2RlAQAPTGluZU51bWJlclRhYmxlAQASTG9jYWxWYXJpYWJsZVRhYmxlAQAEdGhpcwEAJkxjb20vaWJtL2RpL2Nvbm5lY3Rvci9TY3JpcHRDb25uZWN0b3I7AQAKaW5pdGlhbGl6ZQEAFShMamF2YS9sYW5nL09iamVjdDspVgEAA29iagEAEkxqYXZhL2xhbmcvT2JqZWN0OwEAD2tlZXBHbG9iYWxTdGF0ZQEAAVoBAA1TdGFja01hcFRhYmxlAQAKRXhjZXB0aW9ucwEAFmluaXRpYWxpemVTY3JpcHRFbmdpbmUBAAJhbAEAIExjb20vaWJtL2RpL3NlcnZlci9Bc3NlbWJseUxpbmU7AQACc3QBACJMY29tL2libS9pY3UvdXRpbC9TdHJpbmdUb2tlbml6ZXI7AQADZGViAQAdTGNvbS9pYm0vZGkvdXRpbC9EZWJ1Z1NlcnZlcjsBAARleGVjAQADaW5jAQADYWljBwEvBwDPBwEwBwExBwEJAQANc2VsZWN0RW50cmllcwEADGdldE5leHRFbnRyeQEAGigpTGNvbS9pYm0vZGkvZW50cnkvRW50cnk7AQAFZW50cnkHAM0BAAhtb2RFbnRyeQEAPShMY29tL2libS9kaS9lbnRyeS9FbnRyeTtMY29tL2libS9kaS9zZXJ2ZXIvU2VhcmNoQ3JpdGVyaWE7KVYBAAZzZWFyY2gBACJMY29tL2libS9kaS9zZXJ2ZXIvU2VhcmNoQ3JpdGVyaWE7AQBVKExjb20vaWJtL2RpL2VudHJ5L0VudHJ5O0xjb20vaWJtL2RpL3NlcnZlci9TZWFyY2hDcml0ZXJpYTtMY29tL2libS9kaS9lbnRyeS9FbnRyeTspVgEAA29sZAEAC2RlbGV0ZUVudHJ5AQAJZmluZEVudHJ5AQA8KExjb20vaWJtL2RpL3NlcnZlci9TZWFyY2hDcml0ZXJpYTspTGNvbS9pYm0vZGkvZW50cnkvRW50cnk7AQAIcHV0RW50cnkBABsoTGNvbS9pYm0vZGkvZW50cnkvRW50cnk7KVYBAApxdWVyeVJlcGx5AQAyKExjb20vaWJtL2RpL2VudHJ5L0VudHJ5OylMY29tL2libS9kaS9lbnRyeS9FbnRyeTsBAAl0ZXJtaW5hdGUBAAtxdWVyeVNjaGVtYQEAJihMamF2YS9sYW5nL09iamVjdDspTGphdmEvbGFuZy9PYmplY3Q7AQAGc291cmNlAQAEbGlzdAEAEkxqYXZhL3V0aWwvVmVjdG9yOwEAFkxvY2FsVmFyaWFibGVUeXBlVGFibGUBACxMamF2YS91dGlsL1ZlY3RvcjxMY29tL2libS9kaS9lbnRyeS9FbnRyeTs+OwcBJwEACmdldFZlcnNpb24BABQoKUxqYXZhL2xhbmcvU3RyaW5nOwEACDxjbGluaXQ+AQAKU291cmNlRmlsZQEAFFNjcmlwdENvbm5lY3Rvci5qYXZhAQAbY29tL2libS9kaS9zZXJ2ZXIvQ29weVJpZ2h0DACNAI4BABZjb20vaWJtL2RpL2VudHJ5L0VudHJ5DACAAIEBACRjb20vaWJtL2RpL2Nvbm5lY3Rvci9TY3JpcHRDb25uZWN0b3IBABhHZW5lcmljIFNjcmlwdCBDb25uZWN0b3IMATIBMwcBNAwBNQE2DAE3ATgHATkMAToBOwwBPAE9DAB7AHwMAJwAjgwAfgB/AQAnQ09OTkVDVE9SLlNDUklQVC5LRUVQLkdMT0JBTC5TVEFURS5JTkZPDAE+ATgMAT8BMwEACEZ1bmN0aW9uDAFAAUEBABBqYXZhL2xhbmcvT2JqZWN0DAFCAUMMAUQBRQwBRgFHAQAgY29tL2libS9kaS9zY3JpcHQvU2NyaXB0RXhpdENvZGUBABNqYXZhL2xhbmcvRXhjZXB0aW9uAQAkQ09OTkVDVE9SLlNDUklQVC5TRUxFQ1RFTlRSSUVTLkVSUk9SDAFIAMcMAT4BSQwAjQEzDAFKAUsBAAlDb21wb25lbnQMAUwAxwwBTQFOAQAeY29tL2libS9kaS9zZXJ2ZXIvQXNzZW1ibHlMaW5lAQAMQXNzZW1ibHlMaW5lDAFPAVABAB5jb20vaWJtL2RpL3NjcmlwdC9TY3JpcHRFbmdpbmUBAAxTY3JpcHRFbmdpbmUMAVEBUgwAjQFTDAFUAI4BAAljb25uZWN0b3IMAVUBQQEABmNvbmZpZwwBVgFOAQAEbWFpbgwBVwCVAQAiY29tL2libS9kaS9zZXJ2ZXIvQXR0cmlidXRlTWFwcGluZwEAEHRoaXNTY3JpcHRPYmplY3QBABdqYXZhL2xhbmcvU3RyaW5nQnVpbGRlcgwBWAFZAQAKLkNvbm5lY3RvcgwBWgDHBwEvDAFbAVwBAAxpbmNsdWRlRmlsZXMHATAMAV0BRwwBXgFfAQAOaW5jbHVkZVByb2xvZ3MBACBjb20vaWJtL2ljdS91dGlsL1N0cmluZ1Rva2VuaXplcgEAAg0KDACNAV8MAWABPQwBYQDHDAFiAWMBABRpbmNsdWRlR2xvYmFsUHJvbG9ncwEABHRydWUMAWQBZQEALmNvbS9pYm0vZGkvY29uZmlnL2ludGVyZmFjZXMvQmFzZUNvbmZpZ3VyYXRpb24MAWYBZwwBaAFpAQAjQ09OTkVDVE9SLlNDUklQVC5OT0xPQURMSUJTLldBUk5JTkcMAWoBMwEABnNjcmlwdAwBawE9AQAfQ09OTkVDVE9SLlNDUklQVC5SVU5TQ1JJUFQuSU5GTwwAowFLDAFsAUsMAUIBbQwBbgFLDAFvAUEBACNDT05ORUNUT1IuU0NSSVBULkdFVE5FWFRFTlRSWS5FUlJPUgEAH0NPTk5FQ1RPUi5TQ1JJUFQuTU9ERU5UUlkuRVJST1IBAAdjdXJyZW50DACwALEBACJDT05ORUNUT1IuU0NSSVBULkRFTEVURUVOVFJZLkVSUk9SAQAgQ09OTkVDVE9SLlNDUklQVC5GSU5ERU5UUlkuRVJST1IBAB9DT05ORUNUT1IuU0NSSVBULlBVVEVOVFJZLkVSUk9SAQAhQ09OTkVDVE9SLlNDUklQVC5RVUVSWVJFUExZLkVSUk9SAQAQamF2YS91dGlsL1ZlY3RvcgEAIkNPTk5FQ1RPUi5TQ1JJUFQuUVVFUllTQ0hFTUEuRVJST1IBABUyLjItZGk3LjEuMSAlSSUgMjAlRSUBAB5jb20vaWJtL2RpL3NlcnZlci9SZXNvdXJjZUhhc2gBAA9zY3JpcHRjb25uZWN0b3IBAB5jb20vaWJtL2RpL2Nvbm5lY3Rvci9Db25uZWN0b3IBACdjb20vaWJtL2RpL2Nvbm5lY3Rvci9Db25uZWN0b3JJbnRlcmZhY2UBAOJMaWNlbnNlZCBNYXRlcmlhbHMgLSBQcm9wZXJ0eSBvZiBJQk0gCihjKSBDb3B5cmlnaHQgSUJNIENvcnAuIDIwMDMsIDIwMTAgICAgIEFsbCBSaWdodHMgUmVzZXJ2ZWQuIApVUyBHb3Zlcm5tZW50IFVzZXJzIFJlc3RyaWN0ZWQgUmlnaHRzIC0gVXNlLCBkdXBsaWNhdGlvbiBvciAKZGlzY2xvc3VyZSByZXN0cmljdGVkIGJ5IEdTQSBBRFAgU2NoZWR1bGUgQ29udHJhY3Qgd2l0aCBJQk0gQ29ycC4KAQAbY29tL2libS9kaS91dGlsL0RlYnVnU2VydmVyAQAQamF2YS9sYW5nL1N0cmluZwEAHWNvbS9pYm0vZGkvc2VydmVyL1JTSW50ZXJmYWNlAQAHc2V0TmFtZQEAFShMamF2YS9sYW5nL1N0cmluZzspVgEAF2NvbS9pYm0vZGkvc2VydmVyL1RyYWNlAQAIZW50cnltaW4BADkoTGphdmEvbGFuZy9PYmplY3Q7TGphdmEvbGFuZy9TdHJpbmc7TGphdmEvbGFuZy9PYmplY3Q7KVYBAAhnZXRQYXJhbQEAJihMamF2YS9sYW5nL1N0cmluZzspTGphdmEvbGFuZy9TdHJpbmc7AQARamF2YS9sYW5nL0Jvb2xlYW4BAAd2YWx1ZU9mAQAnKExqYXZhL2xhbmcvU3RyaW5nOylMamF2YS9sYW5nL0Jvb2xlYW47AQAMYm9vbGVhblZhbHVlAQADKClaAQAJZ2V0U3RyaW5nAQAFZGVidWcBAAxzZXRBdHRyaWJ1dGUBACcoTGphdmEvbGFuZy9TdHJpbmc7TGphdmEvbGFuZy9PYmplY3Q7KVYBAARjYWxsAQA6KExqYXZhL2xhbmcvU3RyaW5nO1tMamF2YS9sYW5nL09iamVjdDtaKUxqYXZhL2xhbmcvT2JqZWN0OwEAC2dldEV4aXRDb2RlAQAkKClMY29tL2libS9kaS9zY3JpcHQvU2NyaXB0RXhpdENvZGU7AQAJZ2V0U3RhdHVzAQADKClJAQAKZ2V0TWVzc2FnZQEAOChMamF2YS9sYW5nL1N0cmluZztMamF2YS9sYW5nL09iamVjdDspTGphdmEvbGFuZy9TdHJpbmc7AQAHZXhpdG1pbgEAJyhMamF2YS9sYW5nL09iamVjdDtMamF2YS9sYW5nL1N0cmluZzspVgEAB2dldE5hbWUBAApnZXRDb250ZXh0AQAUKClMamF2YS9sYW5nL09iamVjdDsBAAtnZXREZWJ1Z2dlcgEAHygpTGNvbS9pYm0vZGkvdXRpbC9EZWJ1Z1NlcnZlcjsBAA5nZXRSU0ludGVyZmFjZQEAISgpTGNvbS9pYm0vZGkvc2VydmVyL1JTSW50ZXJmYWNlOwEANShMamF2YS9sYW5nL1N0cmluZztMY29tL2libS9kaS9zZXJ2ZXIvUlNJbnRlcmZhY2U7WilWAQAUZGVjbGFyZVVzZXJGdW5jdGlvbnMBABFkZWNsYXJlU3RhdGljQmVhbgEAEGdldENvbmZpZ3VyYXRpb24BAA9kZWNsYXJlVGFza0JlYW4BAAZhcHBlbmQBAC0oTGphdmEvbGFuZy9TdHJpbmc7KUxqYXZhL2xhbmcvU3RyaW5nQnVpbGRlcjsBAAh0b1N0cmluZwEAD2FkZFNjcmlwdEVuZ2luZQEANShMY29tL2libS9kaS9zY3JpcHQvU2NyaXB0RW5naW5lO0xqYXZhL2xhbmcvU3RyaW5nOylWAQAGbGVuZ3RoAQANaW5jbHVkZVNjcmlwdAEAJyhMamF2YS9sYW5nL1N0cmluZztMamF2YS9sYW5nL1N0cmluZzspVgEADWhhc01vcmVUb2tlbnMBAAluZXh0VG9rZW4BAApsb2FkU2NyaXB0AQBHKExjb20vaWJtL2RpL3NlcnZlci9SU0ludGVyZmFjZTtMamF2YS9sYW5nL1N0cmluZztMamF2YS9sYW5nL1N0cmluZztaKVYBAAZlcXVhbHMBABUoTGphdmEvbGFuZy9PYmplY3Q7KVoBABJnZXRNZXRhbWVyZ2VDb25maWcBADAoKUxjb20vaWJtL2RpL2NvbmZpZy9pbnRlcmZhY2VzL01ldGFtZXJnZUNvbmZpZzsBABFpbmNsdWRlQWxsU2NyaXB0cwEAMShMY29tL2libS9kaS9jb25maWcvaW50ZXJmYWNlcy9NZXRhbWVyZ2VDb25maWc7KVYBAAZsb2dtc2cBAAlkZWJ1Z01vZGUBAAhlbnRyeW1heAEAOShMamF2YS9sYW5nL1N0cmluZztbTGphdmEvbGFuZy9PYmplY3Q7KUxqYXZhL2xhbmcvT2JqZWN0OwEAB2V4aXRtYXgBAAtkZWNsYXJlQmVhbgAhAAYAcwABAHQAEgAaAHUAdgABAHcAAAACAHgAGgB5AHYAAQB3AAAAAgBxABoAegB2AAEAdwAAAAIACwACAHsAfAAAABoAfQB2AAEAdwAAAAIABwAaAH4AfwAAAAIAgACBAAAAGgCCAHYAAQB3AAAAAgAVABoAgwB2AAEAdwAAAAIACQAaAIQAdgABAHcAAAACAFIAGgCFAHYAAQB3AAAAAgBWABoAhgB2AAEAdwAAAAIAWwAaAIcAdgABAHcAAAACAGAAGgCIAHYAAQB3AAAAAgBiABoAiQB2AAEAdwAAAAIAZAAaAIoAdgABAHcAAAACAGYAGgCLAHYAAQB3AAAAAgBoABoAjAB2AAEAdwAAAAIAbQAPAAEAjQCOAAEAjwAAAEwAAwABAAAAFiq3AAIquwADWbcABLUABSoSB7YACLEAAAACAJAAAAASAAQAAABwAAQAWQAPAHEAFQByAJEAAAAMAAEAAAAWAJIAkwAAAAEAlACVAAIAjwAAAPYABgADAAAAfyoSCSu4AAoqEgu2AAy4AA22AA49HJkACiq0AA/HAAoqtwAQpwAPKrIAERIStgATtgAUKrQABRIVEgm2ABYqtAAPEgkEvQAXWQMrUwS2ABhXKrQAD7YAGbYAGgSfAB27ABxZsgAREh0qtAAPtgAZtgAetgAftwAgvyoSCbgAIbEAAAADAJAAAAAuAAsAAAB4AAcAegAUAHsAHwB8ACYAgAAyAIQAPQCFAFAAhgBeAIcAeACKAH4AiwCRAAAAIAADAAAAfwCSAJMAAAAAAH8AlgCXAAEAFABrAJgAmQACAJoAAAALAAT8AB8BBgv7AEUAmwAAAAQAAQAcAAIAnACOAAIAjwAAAtIABgAFAAABiCq0AAUSIiq2ACO2ABYBTCq2ACTBACWZAB0qtgAkwAAlTSq0AAUSJiy2ACe2ABYstgAoTCq7AClZKhIqtgAMKrYAKyvGAAcEpwAEA7cALLUADyq0AA+2AC0qtAAPEi4qtgAvKrQADxIwKrYAMbYALyq0AA8SMiq2ACu2AC8qtAAPKrYAJLYAMyq0AA8SNSq0AAW2AC8rxgAhKyq0AA+7ADZZtwA3KrYAI7YAOBI5tgA4tgA6tgA7KhI8tgAMTSzGABYstgA9ngAPKrQADyq2ACMstgA+KhI/tgAMTi3GAC+7AEBZLRJBtwBCOgQZBLYAQ5kAGyq0AA8qtgArKrYAIxkEtgBEBLYARaf/4yoSRrYADDoEGQTGADkZBBJHtgBImQAvKrYAMcEASZkAGSq0AA8qtgAxwABJuQBKAQC2AEunAA8qsgAREky2ABO2AE0qEk62AAxNKrYAT5kAECqyABESUCy2AB+2ABQqtAAPLLsANlm3ADcqtgAjtgA4Ejm2ADi2ADq2AFGxAAAAAwCQAAAAhgAhAAAAlAANAJUADwCWABkAlwAhAJgALgCZADMAmwBRAJwAWACdAGIAngBvAJ8AfACgAIcAoQCUAKMAmACkALYApwC9AKgAyACpANQArADbAK0A3wCuAOsArwDzALABCwC0ARMAtQEiALYBLAC3AUIAuQFOAL0BVQC/AVwAwAFpAMIBhwDDAJEAAABIAAcAIQASAJ0AngACAOsAIACfAKAABAAAAYgAkgCTAAAADwF5AKEAogABAL0AywCjAHYAAgDbAK0ApAB2AAMBEwB1AKUAdgAEAJoAAABeAAr8ADMHAKb/ABYAAgcApwcApgAFBwCnCAA0CAA0BwCoBwCp/wAAAAIHAKcHAKYABgcApwgANAgANAcAqAcAqQH7AGr8AB0HAKj9ABYHAKgHAKr6AB/8ADYHAKgLGgCbAAAABAABABwAAQCrAI4AAgCPAAAAmAAFAAEAAABLKhJSuABTKrQABRIVElK2ABYqtAAPElIBtgBUVyq0AA+2ABm2ABoEnwAduwAcWbIAERIdKrQAD7YAGbYAHrYAH7cAIL8qElK4AFWxAAAAAwCQAAAAHgAHAAAAyQAGAMoAEQDLABwAzAAqAM0ARADPAEoA0ACRAAAADAABAAAASwCSAJMAAACaAAAABQAB+wBEAJsAAAAEAAEAHAABAKwArQACAI8AAADiAAUAAgAAAHMqEla4AFO7AANZtwAETCq0AA8SVyu2AFgqtAAFEhUSVrYAFiq0AA8SVgG2AFRXKrQAD7YAGbYAGgWgAB27ABxZsgARElkqtAAPtgAZtgAetgAftwAgvyq0AA+2ABm2ABqaAAsqEla4AFUBsCoSVrgAVSuwAAAAAwCQAAAAMgAMAAAA1gAGANcADgDZABgA2gAjANsALgDcADwA3QBWAOAAYwDhAGkA4gBrAOUAcQDmAJEAAAAWAAIAAABzAJIAkwAAAA4AZQCuAIEAAQCaAAAACQAC/ABWBwCvFACbAAAABAABABwAAQCwALEAAgCPAAAAtAAFAAMAAABTKrQADxJXK7YAWCq0AA8SWiy2AFgqtAAFEhUSW7YAFiq0AA8SWwG2AFRXKrQAD7YAGbYAGgSfAB27ABxZsgARElwqtAAPtgAZtgAetgAftwAgv7EAAAADAJAAAAAeAAcAAADtAAoA7gAUAO8AHwDxACoA8gA4APMAUgD1AJEAAAAgAAMAAABTAJIAkwAAAAAAUwCuAIEAAQAAAFMAsgCzAAIAmgAAAAUAAfsAUgCbAAAABAABABwAAQCwALQAAgCPAAAAbwADAAQAAAAbKrQADxJdLbYAWCq0AA8SXi22AFgqKyy2AF+xAAAAAgCQAAAAEgAEAAAA+wAKAPwAFAD9ABoA/gCRAAAAKgAEAAAAGwCSAJMAAAAAABsArgCBAAEAAAAbALIAswACAAAAGwC1AIEAAwCbAAAABAABABwAAQC2ALEAAgCPAAAAtAAFAAMAAABTKrQADxJXK7YAWCq0AA8SWiy2AFgqtAAFEhUSYLYAFiq0AA8SYAG2AFRXKrQAD7YAGbYAGgSfAB27ABxZsgAREmEqtAAPtgAZtgAetgAftwAgv7EAAAADAJAAAAAeAAcAAAEEAAoBBQAUAQYAHwEIACoBCQA4AQoAUgEMAJEAAAAgAAMAAABTAJIAkwAAAAAAUwCuAIEAAQAAAFMAsgCzAAIAmgAAAAUAAfsAUgCbAAAABAABABwAAQC3ALgAAgCPAAAA+wAFAAMAAAB+KhJiK7gACrsAA1m3AARNKrQADxJXLLYAWCq0AA8SWiu2AFgqtAAFEhUSYrYAFiq0AA8SYgG2AFRXKrQAD7YAGbYAGgWgAB27ABxZsgAREmMqtAAPtgAZtgAetgAftwAgvyq0AA+2ABm2ABqaAAsqEmK4ACEBsCoSYrgAISywAAAAAwCQAAAANgANAAABEgAHARMADwEVABkBFgAjARcALgEZADkBGgBHARsAYQEgAG4BIQB0ASIAdgEkAHwBJQCRAAAAIAADAAAAfgCSAJMAAAAAAH4AsgCzAAEADwBvAK4AgQACAJoAAAAJAAL8AGEHAK8UAJsAAAAEAAEAHAABALkAugACAI8AAACxAAUAAgAAAFYqEmQruAAKKrQADxJXK7YAWCq0AAUSFRJktgAWKrQADxJkAbYAVFcqtAAPtgAZtgAaBJ8AHbsAHFmyABESZSq0AA+2ABm2AB62AB+3ACC/KhJkuAAhsQAAAAMAkAAAACIACAAAAS0ABwEuABEBLwAcATEAJwEyADUBMwBPATUAVQE2AJEAAAAWAAIAAABWAJIAkwAAAAAAVgCuAIEAAQCaAAAABQAB+wBPAJsAAAAEAAEAHAABALsAvAACAI8AAAC1AAUAAgAAAFkqtAAPElcrtgBYKrQABRIVEma2ABYqtAAPEmYBtgBUVyq0AA+2ABm2ABoFoAAduwAcWbIAERJnKrQAD7YAGbYAHrYAH7cAIL8qtAAPtgAZtgAamgAFAbArsAAAAAMAkAAAACIACAAAATwACgE9ABUBPwAgAUEALgFCAEgBRQBVAUYAVwFIAJEAAAAWAAIAAABZAJIAkwAAAAAAWQCuAIEAAQCaAAAABgAC+wBIDgCbAAAABAABABwAAQC9AI4AAgCPAAAASgAEAAEAAAAYKrQABRIVEmi2ABYqtAAPEmgBBLYAGFexAAAAAgCQAAAADgADAAABTwALAVEAFwFSAJEAAAAMAAEAAAAYAJIAkwAAAJsAAAAEAAEAHAABAL4AvwACAI8AAADvAAUAAwAAAGy7AGlZtwBqTSq0AA8Sayu2AFgqtAAPEmwstgBYKrQABRIVEm22ABYqtAAPEm0BBLYAGFcqtAAPtgAZtgAaBaAAHbsAHFmyABESbiq0AA+2ABm2AB62AB+3ACC/KrQAD7YAGbYAGpoABQGwLLAAAAAEAJAAAAAqAAoAAAFYAAgBWQASAVoAHAFbACcBXgAzAV8AQQFgAFsBYwBoAWQAagFmAJEAAAAgAAMAAABsAJIAkwAAAAAAbADAAJcAAQAIAGQAwQDCAAIAwwAAAAwAAQAIAGQAwQDEAAIAmgAAAAkAAvwAWwcAxQ4AmwAAAAQAAQAcAAEAxgDHAAEAjwAAAC0AAQABAAAAAxJvsAAAAAIAkAAAAAYAAQAAAW8AkQAAAAwAAQAAAAMAkgCTAAAACADIAI4AAQCPAAAAJQADAAAAAAANuwBwWRJxtwByswARsQAAAAEAkAAAAAYAAQAAAFQAAQDJAAAAAgDK</parameter>
+        </Script>
+    </Folder>
+    <JavaLibraries/>
+    <JavaProperties/>
+    <Folder name="Includes"/>
+    <Folder name="Config">
+        <LogConfig name="Logging"/>
+        <InstanceProperties name="AutoStart">
+            <AutoStart/>
+        </InstanceProperties>
+        <TombstonesConfig name="Tombstones"/>
+        <SolutionInterface name="SolutionInterface">
+            <ModTime>1730570257139</ModTime>
+            <InstanceID>_TestingStuff</InstanceID>
+            <enabled>true</enabled>
+        </SolutionInterface>
+    </Folder>
+    <Folder name="Functions"/>
+    <Folder name="AttributeMaps"/>
+    <Properties name="Properties">
+        <Stores>
+            <PropertyStore name="Solution-Properties">
+                <Parser/>
+                <RawConnector>
+                    <InheritFrom>system:/Connectors/ibmdi.Properties</InheritFrom>
+                    <parameter name="collectionType">Solution-Properties</parameter>
+                </RawConnector>
+                <Key>key</Key>
+                <Value>value</Value>
+                <ReadOnly>false</ReadOnly>
+                <InitialLoad>true</InitialLoad>
+                <CacheTimeout>0</CacheTimeout>
+            </PropertyStore>
+            <PropertyStore name="Global-Properties">
+                <Parser/>
+                <RawConnector>
+                    <InheritFrom>system:/Connectors/ibmdi.Properties</InheritFrom>
+                    <parameter name="collectionType">Global-Properties</parameter>
+                </RawConnector>
+                <Key>key</Key>
+                <Value>value</Value>
+                <ReadOnly>false</ReadOnly>
+                <InitialLoad>true</InitialLoad>
+                <CacheTimeout>0</CacheTimeout>
+            </PropertyStore>
+            <PropertyStore name="System-Properties">
+                <Parser/>
+                <RawConnector>
+                    <InheritFrom>system:/Connectors/ibmdi.Properties</InheritFrom>
+                    <parameter name="collectionType">System-Properties</parameter>
+                </RawConnector>
+                <Key>key</Key>
+                <Value>value</Value>
+                <ReadOnly>false</ReadOnly>
+                <InitialLoad>true</InitialLoad>
+                <CacheTimeout>0</CacheTimeout>
+            </PropertyStore>
+            <PropertyStore name="jarifyScriptConnector">
+                <Parser/>
+                <RawConnector>
+                    <InheritFrom>system:/Connectors/ibmdi.Properties</InheritFrom>
+                    <parameter name="collection">@SUBSTITUTE{config.$directory}/jarifyScriptConnector.properties</parameter>
+                    <parameter name="collectionType">jarifyScriptConnector</parameter>
+                </RawConnector>
+                <Key>key</Key>
+                <Value>value</Value>
+                <ReadOnly>false</ReadOnly>
+                <InitialLoad>true</InitialLoad>
+                <CacheTimeout>0</CacheTimeout>
+            </PropertyStore>
+            <PropertyStore name="_TestingStuff">
+                <Parser/>
+                <RawConnector>
+                    <InheritFrom>system:/Connectors/ibmdi.Properties</InheritFrom>
+                    <parameter name="collection">@SUBSTITUTE{config.$directory}/_TestingStuff.properties</parameter>
+                    <parameter name="collectionType">_TestingStuff</parameter>
+                </RawConnector>
+                <Key>key</Key>
+                <Value>value</Value>
+                <ReadOnly>false</ReadOnly>
+                <InitialLoad>true</InitialLoad>
+                <CacheTimeout>0</CacheTimeout>
+            </PropertyStore>
+            <PropertyStore name="Java-Properties">
+                <Parser/>
+                <RawConnector>
+                    <InheritFrom>system:/Connectors/ibmdi.Properties</InheritFrom>
+                    <parameter name="collection">@SUBSTITUTE{config.$directory}/jarifyScriptConnector.properties</parameter>
+                    <parameter name="collectionType">Java-Properties</parameter>
+                </RawConnector>
+                <Key>key</Key>
+                <Value>value</Value>
+                <ReadOnly>false</ReadOnly>
+                <InitialLoad>true</InitialLoad>
+                <CacheTimeout>0</CacheTimeout>
+            </PropertyStore>
+            <PropertyStore name="JarifyScriptedConnector">
+                <Parser/>
+                <RawConnector>
+                    <InheritFrom>system:/Connectors/ibmdi.Properties</InheritFrom>
+                    <parameter name="collection">@SUBSTITUTE{config.$directory}/_TestingStuff.properties</parameter>
+                    <parameter name="collectionType">Default</parameter>
+                </RawConnector>
+                <Key>key</Key>
+                <Value>value</Value>
+                <ReadOnly>false</ReadOnly>
+                <InitialLoad>true</InitialLoad>
+                <CacheTimeout>0</CacheTimeout>
+            </PropertyStore>
+        </Stores>
+    </Properties>
+    <Folder name="Schedules"/>
+    <Folder name="Sequences"/>
+</MetamergeConfig>
