@@ -1,16 +1,16 @@
-<?xml version="1.0" encoding="UTF-8"?><MetamergeConfig IDIversion="Created by SDI7.2 - 2024-06-26" created="Thu Nov 07 23:19:05 CET 2024" createdBy="eddiehartman" modified="Fri Nov 08 11:12:07 CET 2024" modifiedBy="eddiehartman" version="7.1.1">
+<?xml version="1.0" encoding="UTF-8"?><MetamergeConfig IDIversion="Created by SDI7.2 - 2024-06-26" created="Thu Nov 07 23:19:05 CET 2024" createdBy="eddiehartman" modified="Fri Nov 08 21:55:10 CET 2024" modifiedBy="eddiehartman" version="7.1.1">
     <Folder name="AssemblyLines">
         <AssemblyLine name="jarifyScriptedConnector">
-            <ModTime>1731058624311</ModTime>
+            <ModTime>1731098990527</ModTime>
             <Settings/>
             <Hooks/>
             <CheckpointConfig/>
             <SandboxConfig/>
             <SimulationConfig>
                 <SimulationStates>
-                    <Component name="jarifyFunctions" state="Enabled"/>
                     <Component name="testInput" state="Enabled"/>
-                    <Component name="testReadWriteBinary" state="Enabled"/>
+                    <Component name="jarifyFunctions" state="Enabled"/>
+                    <Component name="Template text" state="Enabled"/>
                     <Component name="DoIt" state="Enabled"/>
                 </SimulationStates>
                 <ProxySettings/>
@@ -18,9 +18,38 @@
             <LogConfig/>
             <ContainerEF name="EntryFeedContainer"/>
             <ContainerDF name="DataFlowContainer">
-                <ModTime>1731058624311</ModTime>
+                <ModTime>1731098990527</ModTime>
+                <ALMap name="testInput">
+                    <InheritFrom>[no inheritance]</InheritFrom>
+                    <ModTime>1731054950364</ModTime>
+                    <AttributeMap name="Input">
+                        <InheritFrom>[parent]</InheritFrom>
+                        <ModTime>1731054950364</ModTime>
+                        <AttributeMapItem>
+                            <Name>http.qs.configPath</Name>
+                            <Type>advanced</Type>
+                            <Script>"C:\\TDI\\SolDir\\TutProfile\\TutProfile.xml"</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.connectorName</Name>
+                            <Type>advanced</Type>
+                            <Script>"ManagedSystem"</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.debug</Name>
+                            <Type>advanced</Type>
+                            <Script>true</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.jarfilePath</Name>
+                            <Type>advanced</Type>
+                            <Script>"JarifyScriptConnector/ManagedSystem.jar"</Script>
+                        </AttributeMapItem>
+                    </AttributeMap>
+                    <State>Enabled</State>
+                </ALMap>
                 <Script name="jarifyFunctions">
-                    <ModTime>1731058205502</ModTime>
+                    <ModTime>1731098879826</ModTime>
                     <parameter name="script"><![CDATA[var __httpPath = ""; // Used for some errors
 var __xmlParser = system.getParser("ibmdi.XML2"); // For parsing xml
 
@@ -231,12 +260,22 @@ function writeBinaryFile(filePath, encoded) {
 }
 
 function addFile(args) {
+	if (!args.content) {
+		var errmsg = "Error adding file " + args.path + " due to empty content";
+		log("ERROR", errmsg);
+		throw errmsg;
+	}
 	var path = args.path;
 	var entries = args.entries;
 	entries[path] = {};
 	for (var arg in args) {
 		entries[path][arg] = args[arg]
 	}
+}
+
+// Tailor the xml to fit this Connector
+function prepareTDIxml(xml) {
+	return xml;
 }
 
 // Archive functions
@@ -370,50 +409,48 @@ _zipperObj = function(useBuffer) {
 // Create a global variable to access this functionality
 _zipper = new _zipperObj();]]></parameter>
                 </Script>
-                <ALMap name="testInput">
+                <ALMap name="Template text">
                     <InheritFrom>[no inheritance]</InheritFrom>
-                    <ModTime>1731054950364</ModTime>
+                    <ModTime>1731098134381</ModTime>
                     <AttributeMap name="Input">
                         <InheritFrom>[parent]</InheritFrom>
-                        <ModTime>1731054950364</ModTime>
+                        <ModTime>1731098134381</ModTime>
                         <AttributeMapItem>
-                            <Name>http.qs.configPath</Name>
-                            <Type>advanced</Type>
-                            <Script>"C:\\TDI\\SolDir\\TutProfile\\TutProfile.xml"</Script>
+                            <Name>meta-inf_template</Name>
+                            <Type>substitution</Type>
+                            <Script>work["meta-inf"]</Script>
+                            <SubstitutionTemplate><![CDATA[Manifest-Version: 1.0
+TDI-Version: 7.2
+Created-By: An avid TDIer]]></SubstitutionTemplate>
                         </AttributeMapItem>
                         <AttributeMapItem>
-                            <Name>http.qs.connectorName</Name>
-                            <Type>advanced</Type>
-                            <Script>"ManagedSystem"</Script>
+                            <Name>nls_template</Name>
+                            <Type>substitution</Type>
+                            <Script>work.nls_properties</Script>
+                            <SubstitutionTemplate><![CDATA[######################################################
+#  Resource Strings
+#
+# TRNOTE: 
+#
+#  cmvc_en_version_level=%I%,%S%,%E%,%U% 
+# Generic (Common) resource strings
+######################################################
+# NLS_MESSAGEFORMAT_NONE
+# NLS_ENCODING=UNICODE
+Advanced=Advanced
+Connector.Title=]]></SubstitutionTemplate>
                         </AttributeMapItem>
                         <AttributeMapItem>
-                            <Name>http.qs.debug</Name>
-                            <Type>advanced</Type>
-                            <Script>true</Script>
-                        </AttributeMapItem>
-                        <AttributeMapItem>
-                            <Name>http.qs.jarfilePath</Name>
-                            <Type>advanced</Type>
-                            <Script>"JarifyScriptConnector/ManagedSystem.jar"</Script>
+                            <Name>properties_template</Name>
+                            <Type>substitution</Type>
+                            <Script>work.properties</Script>
+                            <SubstitutionTemplate>SOME.UI.LABEL.OR.MSG=English version of the label or message</SubstitutionTemplate>
                         </AttributeMapItem>
                     </AttributeMap>
                     <State>Enabled</State>
                 </ALMap>
-                <Script name="testReadWriteBinary">
-                    <ModTime>1730972946836</ModTime>
-                    <parameter name="enabled">false</parameter>
-                    <parameter name="script"><![CDATA[var filePath = "\\JarifyScriptedConnector\\ScriptConnector.class";
-
-classStrRead = readBinaryFile(filePath);
-
-classStr = system.getScriptText("ScriptConnector.class");
-
-writeBinaryFile(filePath + "jarbinks", classStr);
-
-i = 42;]]></parameter>
-                </Script>
                 <Script name="DoIt">
-                    <ModTime>1731058624311</ModTime>
+                    <ModTime>1731098990527</ModTime>
                     <parameter name="script"><![CDATA[var jarEntries = {}; // The directory of the files in the jar file 
 var ui = getUserInput(work);
 
@@ -431,11 +468,12 @@ var tdiXMLentry = buildTemplateDOM();
 // Add the Connector under the Folder node
 tdiXMLentry.getNodeList("//Folder").item(0).appendChild(ctrEntry.Connector);
 
-// Add the tdi.xl file to the list to add
+var tdiXMLstring = '<?xml version="1.0" encoding="UTF-8"?>\n' + tdiXMLentry.toXML();
+// Add the tdi.xml file to the list to add
 addFile({
 	entries: jarEntries,
 	path: "tdi.xml",
-	content: '<?xml version="1.0" encoding="UTF-8"?>\n' + tdiXMLentry.toXML()
+	content: prepareTDIxml(tdiXMLstring)
 })
 // Add the ScriptConnector class
 addFile({
@@ -443,6 +481,24 @@ addFile({
 	path: "com/ibm/di/connector/ScriptConnector)",
 	content: system.getScriptText("ScriptConnector.class"),
 	base64: true	
+})
+// And now the NLs folder and file
+addFile({
+	entries: jarEntries,
+	path: "NLS/" + ui.internalName + ".properties",
+	content: work.getString("nls_template") + ui.connectorName + " Connector"
+})
+// Meta folder and file
+addFile({
+	entries: jarEntries,
+	path: "META-INF/MANIFEST.MF",
+	content: work.getString("nls_template")
+})
+// Finally, the properties file
+addFile({
+	entries: jarEntries,
+	path: ui.internalName + ".properties",
+	content: work.getString("properties_template")
 })
 
 _zipper.log("Creating JAR file: " + ui.jarfilePath);
@@ -2271,6 +2327,468 @@ classStr = system.getScriptText("ScriptConnector.class");
 writeBinaryFile(filePath + "jarbinks", classStr);
 
 i = 42;]]></parameter>
+                </Script>
+            </ContainerDF>
+            <ThreadOptions/>
+            <Operations/>
+            <InitParams>
+                <Schema name="AssemblyLineInitParams"/>
+            </InitParams>
+        </AssemblyLine>
+    <AssemblyLine name="jarifyScriptedConnector 20241108 2111">
+            <ModTime>1731061733834</ModTime>
+            <Settings/>
+            <Hooks/>
+            <CheckpointConfig/>
+            <SandboxConfig/>
+            <SimulationConfig>
+                <SimulationStates>
+                    <Component name="jarifyFunctions" state="Enabled"/>
+                    <Component name="testInput" state="Enabled"/>
+                    <Component name="testReadWriteBinary" state="Enabled"/>
+                    <Component name="DoIt" state="Enabled"/>
+                </SimulationStates>
+                <ProxySettings/>
+            </SimulationConfig>
+            <LogConfig/>
+            <ContainerEF name="EntryFeedContainer"/>
+            <ContainerDF name="DataFlowContainer">
+                <ModTime>1731061733834</ModTime>
+                <Script name="jarifyFunctions">
+                    <ModTime>1731058205502</ModTime>
+                    <parameter name="script"><![CDATA[var __httpPath = ""; // Used for some errors
+var __xmlParser = system.getParser("ibmdi.XML2"); // For parsing xml
+
+function log(lvl, msg) {
+	if (typeof lvl == "undefined") {
+		lvl = "INFO";
+		msg = "";
+	} else {
+		msg = lvl;
+		lvl = "INFO";
+	}
+	
+	task.logmsg(msg);
+	java.lang.System.out.println(lvl + " - " + msg);
+}
+
+// Handle base64 decoding
+function decode(encodedString)  {
+	var ByteArrayInputStream = Packages.java.io.ByteArrayInputStream;
+	var ZipEntry = Packages.java.util.zip.ZipEntry;
+	var ZipOutputStream = Packages.java.util.zip.ZipOutputStream;
+	var Base64 = Packages.java.util.Base64;
+	
+	// Retrieve the base64 encoded string from the resource script 'ScriptConnector.class'
+	var encodedString = system.getResource("ScriptConnector.class");
+	
+	// Decode the base64 string
+	var decodedBytes = Base64.getDecoder().decode(encodedString);
+	
+	// Create an InputStream from the decoded byte array
+	var inputStream = new ByteArrayInputStream(decodedBytes);
+	
+	// Define the name for the entry to be added in the zip file
+	var zipEntryName = "ScriptConnector.class";
+	var zipEntry = new ZipEntry(zipEntryName);
+}
+
+function throwURLexception(exMsg, ex) {
+	if (typeof ex != "undefined") exMsg += "\n-> " + ex;
+	throw new java.net.MalformedURLException(exMsg + " - " + __httpPath)
+}
+
+function throwIOexception(exMsg, ex) {
+	if (typeof ex != "undefined") exMsg += "\n-> " + ex;
+	throw new java.net.IOException(exMsg);
+}
+
+// Make sure a valid path ends in slash
+function fixJarPath(path, connectorName) {
+	if (!path) 
+		path = ""
+	else {
+		path = path.trim();
+	}
+	if (path.endsWith("\\") || path.endsWith("/")) {
+		path += connectorName + ".jar"
+	} else
+	if (!path.toLowerCase().endsWith(".jar")) {
+		path += ".jar"
+	}	
+	return path;
+}
+
+// Get user input
+function getUserInput(entry) {
+	// set global __httpPath variable used by exception functions
+	__httpPath = entry.getString("http.path");
+	
+	// create obj with input from http base
+	var userInput = {
+		configPath : entry.getString("http.qs.configPath") 
+							|| throwURLexception("pathNotSpecified"),
+		connectorName : entry.getString("http.qs.connectorName") 
+							|| throwURLexception("nameNotSpecified"),
+		jarfilePath : fixJarPath(entry.getString("http.qs.jarfilePath"))
+	}
+
+	userInput.jarfilePath = getFullPathname(userInput.jarfilePath);
+	userInput.internalName = userInput.connectorName.toLowerCase();
+
+	return userInput
+}
+
+// Read and parse the config file to a DOM tree 
+//  as implemented by Entry & Attribute for hierarchical data
+function readAndParseConfig(configPath) {
+	try {
+		// Open and read in config file
+		var xmlFile = system.openFileForInput(configPath);
+		var xml = "";
+		var line = "";
+		while ((line = xmlFile.readLine()) != null) {
+			xml += line;
+		}
+		
+		// Prepare to parse using the XML Parser
+
+		__xmlParser.setParam("entry.tag",null);
+		__xmlParser.setParam("value.tag",null);
+		__xmlParser.setInputStream(xml);
+		__xmlParser.initParser();
+		
+		// Parse the XML into a DOM Node tree
+		domEntry = __xmlParser.readEntry();
+		return domEntry;
+	} catch (ex) {
+		throwIOexception("Cannot parse config file: " + configPath, ex);
+	}
+}
+
+// Find the ScriptConnector node in the entry DOM tree
+function findConnector(domEntry, connectorName) {
+	// Use XPath search to find the named Connector
+	var xpath = "//Folder[@name='Connectors']/Connector[@name='" + connectorName + "']";
+	var ctr = domEntry.getNodeList(xpath).item(0);
+	if (ctr == null) {
+		throwURLexception("Could not find connector " + connectorName + " in " + configFilepath);
+	}
+	
+	// Ensure it is scripted
+	var inheritFrom = ctr.getElementsByTagName("InheritFrom").item(0).getValue();
+	if (inheritFrom != "system:/Connectors/ibmdi.ScriptConnector") {
+		throwURLexception("Connector is not a ScriptConnector: " + connectorName);
+	}
+	
+	//Now create a new DOM tree (entry) with this Connector at it root
+	var ctrEntry = system.newEntry();
+	ctrEntry.setAttribute(ctr.cloneNode(true)); // true = Deep node tree clone
+	
+	return ctrEntry;
+}
+
+// Build a DOM tree based on the template for the tdi.xml file
+function buildTemplateDOM() {
+	// Get template tdi.xml value
+	var tdiXMLstr = system.getScriptText("templateTDIxml");
+	
+	// Set today's date in it
+	var datePattern = "E MMM d HH:mm:ss z YYYY";
+	var dateFormatter = new java.text.SimpleDateFormat(datePattern);
+	var todaysDateStr = dateFormatter.format(new java.util.Date());
+	var startPos = tdiXMLstr.indexOf("MetamergeConfig created=\"");
+	var tdiXMLstr = tdiXMLstr.substring(0,startPos + 25)
+		+ todaysDateStr
+		+ tdiXMLstr.substring(tdiXMLstr.indexOf("\" version"));
+	
+	// Parse the XML to a DOM tree that we can add the Connector DOM to
+	__xmlParser.setInputStream(tdiXMLstr);
+	__xmlParser.initParser();
+	tdiXMLentry = __xmlParser.readEntry();
+
+	return tdiXMLentry;
+}
+
+function getFullPathname(filePath) {
+	// Get working dir (which is Solution Directory by default)
+	var soldir = java.lang.System.getProperty("user.dir");
+	
+	// Complete full pathname
+	var fullPathname = filePath;
+	if (!fullPathname.toLowerCase().startsWith(soldir.toLowerCase())) {
+		// Add leading backslash if missing
+		if (!fullPathname.startsWith("\\") && !fullPathname.startsWith("/")) {
+			fullPathname = soldir + "\\" + fullPathname;
+		} else {
+			fullPathname = soldir + fullPathname;
+		}
+	}
+	return fullPathname;
+}
+
+// Return the contents of a binary file (e.g. class file) as an ArrayList
+function readBinaryFile(filePath) {
+	filePath = filePath.trim();
+	var fullPathname = getFullPathname(filePath);
+	
+	var file = new java.io.File(fullPathname);
+	var encoded = java.util.Base64.getEncoder().encodeToString(java.nio.file.Files.readAllBytes(file.toPath()));
+	return encoded;
+	
+	// Left this old stuff in just in case
+	// Open an input stream
+	var inputStream = new java.io.FileInputStream(fullPathname);
+	var data;
+	var strBuff = new java.lang.StringBuffer();
+	// Read int values and append these to the string buffer
+	while ((data = inputStream.read()) != -1) {
+	    strBuff.append(data);
+	}
+	inputStream.close();
+	
+	return strBuff.toString();
+}
+
+// Write a binary file based on the passed 'contentsStr' string
+function writeBinaryFile(filePath, encoded) {
+	filePath = filePath.trim() + ".2";
+	var fullPathname = getFullPathname(filePath);
+	var decoded = java.util.Base64.getDecoder().decode(encoded);
+	// Write it to file with an output stream
+	var outputStream = new java.io.FileOutputStream(fullPathname);
+	var len = encoded.length;
+	for (var i in decoded) {
+		outputStream.write(i)
+	}
+	outputStream.close();
+	return true;
+}
+
+function addFile(args) {
+	var path = args.path;
+	var entries = args.entries;
+	entries[path] = {};
+	for (var arg in args) {
+		entries[path][arg] = args[arg]
+	}
+}
+
+// Archive functions
+_zipperObj = function(useBuffer) {
+	this.BUFFER = useBuffer || 2048;
+	this.data = java.lang.reflect.Array.newInstance(java.lang.Byte.TYPE, this.BUFFER);
+	this.zos;
+	
+	this.unzip = function(filePath) {
+		try {
+			this.log("-------");
+			this.log("Unzipping " + filePath);
+			var dest = null; // BufferedOutputStream 
+			var inf = new java.io.File(filePath);
+			if (!inf.exists()) {
+				throw "Input jar file does not exist: " + filePath;
+			}
+			var fis = new java.io.FileInputStream(filePath);
+			var zis = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(fis));
+			var entry; // ZipEntry
+			while ((entry = zis.getNextEntry()) != null) {
+				// write the files to the disk
+				var outf = new java.io.File(toFolder + entry.getName());
+				if (entry.isDirectory()) {
+					if (outf.mkdir()) {
+						this.log("Creating folder " + outf);
+					}
+				} else {
+					for (var parent = outf.getParentFile(); parent != null; parent = parent.getParentFile()) {
+						if (parent.mkdir()) {
+							this.log("Creating folder " + parent);							
+						}
+					}
+				}
+			}
+
+			zis.close();
+			fis = new java.io.FileInputStream(filePath);
+			zis = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(fis));
+			while ((entry = zis.getNextEntry()) != null) {
+				var count;
+				// write the files to the disk
+				outf = new java.io.File(toFolder + entry.getName());
+				if (!entry.isDirectory()) {
+					this.log("Extracting: " + entry.getName() + " method: " + entry.getMethod());
+					var fos = new java.io.FileOutputStream(toFolder + entry.getName());
+					var dest = new java.io.BufferedOutputStream(fos, this.BUFFER);
+					while ((count = zis.read(this.data, 0, this.BUFFER)) != -1) {
+						dest.write(this.data, 0, count);
+					}
+					dest.flush();
+					dest.close();
+				}
+			}
+			zis.close();
+		} catch (e) {
+			throw "Error unzipping - " +  e;
+		}
+	}
+	
+	this.zip = function(args) {
+		// path, content
+		var jarEntries = args.entries;
+		var jarfilePath = args.jarfilePath;
+		try {
+			var file = new java.io.File(jarfilePath);
+			var fos = new java.io.FileOutputStream(file);
+			var entry;
+			var data;
+			
+			this.zos = new java.util.zip.ZipOutputStream(fos);
+			this.zos.setLevel(8);
+			
+			for (var entryName in jarEntries) {
+			 	entry = new java.util.zip.ZipEntry(entryName); 
+			 	this.zos.putNextEntry(entry);
+			 	
+				data = jarEntries[entryName];
+				if (data.base64) {
+					this.zipBinary(data.content)								
+				} else {
+					this.zos.write(data.content.getBytes())
+				}
+			
+				this.zos.closeEntry();
+			}
+			
+			this.zos.finish();
+			this.zos.close();
+		} catch(ex) {
+			throw "Error creating jar - " + ex;
+		}
+	}
+	
+	// Decode a base64 string to the original content
+	this.zipBinary = function(base64string) {
+		var decoded = java.util.Base64.getDecoder().decode(base64string);
+		// Buffer to hold bytes for writing
+		var buffer = java.lang.reflect.Array.newInstance(java.lang.Byte.TYPE, 1024);
+		var len;
+
+		// Create an InputStream from the decoded byte array
+		var inputStream = new java.io.ByteArrayInputStream(decoded);
+		
+		// Buffer to hold bytes for writing
+		var buffer = java.lang.reflect.Array.newInstance(java.lang.Byte.TYPE, 1024);
+		var len;
+		
+		// Read from inputStream and write to ZipOutputStream
+		while ((len = inputStream.read(buffer)) > 0) {
+		    this.zos.write(buffer, 0, len);
+		}
+	}
+	
+	this.log = function(lvl, msg) {
+		if (typeof lvl == "undefined") {
+			lvl = "INFO";
+			msg = "";
+		} else
+		if (typeof msg == "undefined") {
+			msg = lvl;
+			lvl = "INFO";
+		}
+		log(lvl, msg);
+		java.lang.System.out.println(lvl + " - " + msg);
+	}
+	
+	return this;
+}
+
+// Create a global variable to access this functionality
+_zipper = new _zipperObj();]]></parameter>
+                </Script>
+                <ALMap name="testInput">
+                    <InheritFrom>[no inheritance]</InheritFrom>
+                    <ModTime>1731054950364</ModTime>
+                    <AttributeMap name="Input">
+                        <InheritFrom>[parent]</InheritFrom>
+                        <ModTime>1731054950364</ModTime>
+                        <AttributeMapItem>
+                            <Name>http.qs.configPath</Name>
+                            <Type>advanced</Type>
+                            <Script>"C:\\TDI\\SolDir\\TutProfile\\TutProfile.xml"</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.connectorName</Name>
+                            <Type>advanced</Type>
+                            <Script>"ManagedSystem"</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.debug</Name>
+                            <Type>advanced</Type>
+                            <Script>true</Script>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>http.qs.jarfilePath</Name>
+                            <Type>advanced</Type>
+                            <Script>"JarifyScriptConnector/ManagedSystem.jar"</Script>
+                        </AttributeMapItem>
+                    </AttributeMap>
+                    <State>Enabled</State>
+                </ALMap>
+                <Script name="testReadWriteBinary">
+                    <ModTime>1730972946836</ModTime>
+                    <parameter name="enabled">false</parameter>
+                    <parameter name="script"><![CDATA[var filePath = "\\JarifyScriptedConnector\\ScriptConnector.class";
+
+classStrRead = readBinaryFile(filePath);
+
+classStr = system.getScriptText("ScriptConnector.class");
+
+writeBinaryFile(filePath + "jarbinks", classStr);
+
+i = 42;]]></parameter>
+                </Script>
+                <Script name="DoIt">
+                    <ModTime>1731061733834</ModTime>
+                    <parameter name="script"><![CDATA[var jarEntries = {}; // The directory of the files in the jar file 
+var ui = getUserInput(work);
+
+// First read in the Config to a DOM tree we can search and prune
+var domEntry = readAndParseConfig(ui.configPath);
+
+// Find the ScriptConnector specified in this Config
+var ctrEntry = findConnector(domEntry, ui.connectorName);
+
+// Use the template under Resources/Scripts to start a new DOM tree
+// for 
+var tdiXMLentry = buildTemplateDOM();
+
+// Now attach the connector DOM tree to the template tdi.xml one
+// Add the Connector under the Folder node
+tdiXMLentry.getNodeList("//Folder").item(0).appendChild(ctrEntry.Connector);
+
+// Add the tdi.xl file to the list to add
+addFile({
+	entries: jarEntries,
+	path: "tdi.xml",
+	content: '<?xml version="1.0" encoding="UTF-8"?>\n' + tdiXMLentry.toXML()
+})
+// Add the ScriptConnector class
+addFile({
+	entries: jarEntries,
+	path: "com/ibm/di/connector/ScriptConnector)",
+	content: system.getScriptText("ScriptConnector.class"),
+	base64: true	
+})
+
+_zipper.log("Creating JAR file: " + ui.jarfilePath);
+try {
+	_zipper.zip({
+		jarfilePath: ui.jarfilePath,
+		entries: jarEntries
+	})
+} catch (ex) {
+	throw "Error creating archive: " + ex;
+}]]></parameter>
                 </Script>
             </ContainerDF>
             <ThreadOptions/>
