@@ -1,7 +1,7 @@
-<?xml version="1.0" encoding="UTF-8"?><MetamergeConfig IDIversion="Created by SDI7.2 - 2024-06-26" created="Thu Nov 07 23:19:05 CET 2024" createdBy="eddiehartman" modified="Fri Nov 08 21:55:10 CET 2024" modifiedBy="eddiehartman" version="7.1.1">
+<?xml version="1.0" encoding="UTF-8"?><MetamergeConfig IDIversion="Created by SDI7.2 - 2024-06-26" created="Thu Nov 07 23:19:05 CET 2024" createdBy="eddiehartman" modified="Sun Nov 10 21:11:57 CET 2024" modifiedBy="eddiehartman" version="7.1.1">
     <Folder name="AssemblyLines">
         <AssemblyLine name="jarifyScriptedConnector">
-            <ModTime>1731098990527</ModTime>
+            <ModTime>1731269417861</ModTime>
             <Settings/>
             <Hooks/>
             <CheckpointConfig/>
@@ -9,47 +9,104 @@
             <SimulationConfig>
                 <SimulationStates>
                     <Component name="testInput" state="Enabled"/>
-                    <Component name="jarifyFunctions" state="Enabled"/>
                     <Component name="Template text" state="Enabled"/>
+                    <Component name="jarifyFunctions" state="Enabled"/>
                     <Component name="DoIt" state="Enabled"/>
                 </SimulationStates>
                 <ProxySettings/>
             </SimulationConfig>
             <LogConfig/>
-            <ContainerEF name="EntryFeedContainer"/>
+            <ContainerEF name="EntryFeedContainer">
+                <ModTime>1731269417861</ModTime>
+            </ContainerEF>
             <ContainerDF name="DataFlowContainer">
-                <ModTime>1731098990527</ModTime>
+                <ModTime>1731269417577</ModTime>
                 <ALMap name="testInput">
                     <InheritFrom>[no inheritance]</InheritFrom>
-                    <ModTime>1731054950364</ModTime>
+                    <ModTime>1731268804656</ModTime>
                     <AttributeMap name="Input">
                         <InheritFrom>[parent]</InheritFrom>
-                        <ModTime>1731054950364</ModTime>
+                        <ModTime>1731268804656</ModTime>
                         <AttributeMapItem>
-                            <Name>http.qs.configPath</Name>
+                            <Name>configPath</Name>
                             <Type>advanced</Type>
                             <Script>"C:\\TDI\\SolDir\\TutProfile\\TutProfile.xml"</Script>
                         </AttributeMapItem>
                         <AttributeMapItem>
-                            <Name>http.qs.connectorName</Name>
+                            <Name>connectorName</Name>
                             <Type>advanced</Type>
-                            <Script>"ManagedSystem"</Script>
+                            <Script>"MyScriptedConnector"</Script>
                         </AttributeMapItem>
                         <AttributeMapItem>
-                            <Name>http.qs.debug</Name>
+                            <Name>debug</Name>
                             <Type>advanced</Type>
                             <Script>true</Script>
                         </AttributeMapItem>
                         <AttributeMapItem>
-                            <Name>http.qs.jarfilePath</Name>
+                            <Name>jarfilePath</Name>
                             <Type>advanced</Type>
-                            <Script>"JarifyScriptConnector/ManagedSystem.jar"</Script>
+                            <Script>"CustomJars/MyScriptConnector.jar"</Script>
+                        </AttributeMapItem>
+                    </AttributeMap>
+                    <State>Enabled</State>
+                </ALMap>
+                <ALMap name="Template text">
+                    <InheritFrom>[no inheritance]</InheritFrom>
+                    <ModTime>1731269355976</ModTime>
+                    <AttributeMap name="Input">
+                        <InheritFrom>[parent]</InheritFrom>
+                        <ModTime>1731269355976</ModTime>
+                        <AttributeMapItem>
+                            <Name>manifest_template</Name>
+                            <Type>substitution</Type>
+                            <Script>work["meta-inf"]</Script>
+                            <SubstitutionTemplate><![CDATA[Manifest-Version: 1.0
+TDI-Version: 7.2
+Created-By: An avid TDIer]]></SubstitutionTemplate>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>nls_template</Name>
+                            <Type>substitution</Type>
+                            <Script>work.nls_properties</Script>
+                            <SubstitutionTemplate><![CDATA[######################################################
+#  Resource Strings
+#
+# TRNOTE: 
+#
+#  cmvc_en_version_level=%I%,%S%,%E%,%U% 
+# Generic (Common) resource strings
+######################################################
+# NLS_MESSAGEFORMAT_NONE
+# NLS_ENCODING=UNICODE
+Advanced=Advanced
+Connector.Title={work.connectorName}
+# Examples below for labels in the UI or messages in logs
+browse_label=Select...
+browse_help=Browse file system
+
+]]></SubstitutionTemplate>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>properties_template</Name>
+                            <Type>substitution</Type>
+                            <Script>work.properties</Script>
+                            <SubstitutionTemplate>SOME.UI.LABEL.OR.MSG=English version of the label or message</SubstitutionTemplate>
+                        </AttributeMapItem>
+                        <AttributeMapItem>
+                            <Name>templateTDIxml</Name>
+                            <Type>substitution</Type>
+                            <Script>work.templateTDIxml</Script>
+                            <SubstitutionTemplate><![CDATA[<?xml version="1.0" encoding="UTF-8"?>
+<MetamergeConfig created="Tue Oct 22 09:55:21 CEST 2013" version="7.1.1">
+  <Folder name="Connectors">
+  </Folder>
+</MetamergeConfig>]]></SubstitutionTemplate>
                         </AttributeMapItem>
                     </AttributeMap>
                     <State>Enabled</State>
                 </ALMap>
                 <Script name="jarifyFunctions">
-                    <ModTime>1731098879826</ModTime>
+                    <ModTime>1731268827534</ModTime>
                     <parameter name="script"><![CDATA[var __httpPath = ""; // Used for some errors
 var __xmlParser = system.getParser("ibmdi.XML2"); // For parsing xml
 
@@ -120,11 +177,11 @@ function getUserInput(entry) {
 	
 	// create obj with input from http base
 	var userInput = {
-		configPath : entry.getString("http.qs.configPath") 
+		configPath : entry.getString("configPath") 
 							|| throwURLexception("pathNotSpecified"),
-		connectorName : entry.getString("http.qs.connectorName") 
+		connectorName : entry.getString("connectorName") 
 							|| throwURLexception("nameNotSpecified"),
-		jarfilePath : fixJarPath(entry.getString("http.qs.jarfilePath"))
+		jarfilePath : fixJarPath(entry.getString("jarfilePath"))
 	}
 
 	userInput.jarfilePath = getFullPathname(userInput.jarfilePath);
@@ -161,18 +218,19 @@ function readAndParseConfig(configPath) {
 }
 
 // Find the ScriptConnector node in the entry DOM tree
-function findConnector(domEntry, connectorName) {
+function findConnector(domEntry, userInput) {
 	// Use XPath search to find the named Connector
-	var xpath = "//Folder[@name='Connectors']/Connector[@name='" + connectorName + "']";
+	var xpath = "//Folder[@name='Connectors']/Connector[@name='" + userInput.connectorName + "']";
 	var ctr = domEntry.getNodeList(xpath).item(0);
 	if (ctr == null) {
-		throwURLexception("Could not find connector " + connectorName + " in " + configFilepath);
+		throwURLexception("Could not find connector " 
+							+ userInput.connectorName + " in " + userInput.configPath);
 	}
 	
 	// Ensure it is scripted
 	var inheritFrom = ctr.getElementsByTagName("InheritFrom").item(0).getValue();
 	if (inheritFrom != "system:/Connectors/ibmdi.ScriptConnector") {
-		throwURLexception("Connector is not a ScriptConnector: " + connectorName);
+		throwURLexception("Connector is not a ScriptConnector: " + userInput.connectorName);
 	}
 	
 	//Now create a new DOM tree (entry) with this Connector at it root
@@ -185,7 +243,7 @@ function findConnector(domEntry, connectorName) {
 // Build a DOM tree based on the template for the tdi.xml file
 function buildTemplateDOM() {
 	// Get template tdi.xml value
-	var tdiXMLstr = system.getScriptText("templateTDIxml");
+	var tdiXMLstr = work.getString("templateTDIxml");
 	
 	// Set today's date in it
 	var datePattern = "E MMM d HH:mm:ss z YYYY";
@@ -409,48 +467,8 @@ _zipperObj = function(useBuffer) {
 // Create a global variable to access this functionality
 _zipper = new _zipperObj();]]></parameter>
                 </Script>
-                <ALMap name="Template text">
-                    <InheritFrom>[no inheritance]</InheritFrom>
-                    <ModTime>1731098134381</ModTime>
-                    <AttributeMap name="Input">
-                        <InheritFrom>[parent]</InheritFrom>
-                        <ModTime>1731098134381</ModTime>
-                        <AttributeMapItem>
-                            <Name>meta-inf_template</Name>
-                            <Type>substitution</Type>
-                            <Script>work["meta-inf"]</Script>
-                            <SubstitutionTemplate><![CDATA[Manifest-Version: 1.0
-TDI-Version: 7.2
-Created-By: An avid TDIer]]></SubstitutionTemplate>
-                        </AttributeMapItem>
-                        <AttributeMapItem>
-                            <Name>nls_template</Name>
-                            <Type>substitution</Type>
-                            <Script>work.nls_properties</Script>
-                            <SubstitutionTemplate><![CDATA[######################################################
-#  Resource Strings
-#
-# TRNOTE: 
-#
-#  cmvc_en_version_level=%I%,%S%,%E%,%U% 
-# Generic (Common) resource strings
-######################################################
-# NLS_MESSAGEFORMAT_NONE
-# NLS_ENCODING=UNICODE
-Advanced=Advanced
-Connector.Title=]]></SubstitutionTemplate>
-                        </AttributeMapItem>
-                        <AttributeMapItem>
-                            <Name>properties_template</Name>
-                            <Type>substitution</Type>
-                            <Script>work.properties</Script>
-                            <SubstitutionTemplate>SOME.UI.LABEL.OR.MSG=English version of the label or message</SubstitutionTemplate>
-                        </AttributeMapItem>
-                    </AttributeMap>
-                    <State>Enabled</State>
-                </ALMap>
                 <Script name="DoIt">
-                    <ModTime>1731098990527</ModTime>
+                    <ModTime>1731268691384</ModTime>
                     <parameter name="script"><![CDATA[var jarEntries = {}; // The directory of the files in the jar file 
 var ui = getUserInput(work);
 
@@ -458,7 +476,7 @@ var ui = getUserInput(work);
 var domEntry = readAndParseConfig(ui.configPath);
 
 // Find the ScriptConnector specified in this Config
-var ctrEntry = findConnector(domEntry, ui.connectorName);
+var ctrEntry = findConnector(domEntry, ui);
 
 // Use the template under Resources/Scripts to start a new DOM tree
 // for 
@@ -478,7 +496,7 @@ addFile({
 // Add the ScriptConnector class
 addFile({
 	entries: jarEntries,
-	path: "com/ibm/di/connector/ScriptConnector)",
+	path: "com/ibm/di/connector/ScriptConnector.class",
 	content: system.getScriptText("ScriptConnector.class"),
 	base64: true	
 })
@@ -486,13 +504,13 @@ addFile({
 addFile({
 	entries: jarEntries,
 	path: "NLS/" + ui.internalName + ".properties",
-	content: work.getString("nls_template") + ui.connectorName + " Connector"
+	content: work.getString("nls_template") + "\n"
 })
 // Meta folder and file
 addFile({
 	entries: jarEntries,
 	path: "META-INF/MANIFEST.MF",
-	content: work.getString("nls_template")
+	content: work.getString("manifest_template")
 })
 // Finally, the properties file
 addFile({
