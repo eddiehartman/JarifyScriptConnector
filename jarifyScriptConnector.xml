@@ -1,7 +1,7 @@
-<?xml version="1.0" encoding="UTF-8"?><MetamergeConfig IDIversion="Created by SDI7.2 - 2024-06-26" created="Thu Nov 07 23:19:05 CET 2024" createdBy="eddiehartman" modified="Mon Nov 11 09:09:49 CET 2024" modifiedBy="eddiehartman" version="7.1.1">
+<?xml version="1.0" encoding="UTF-8"?><MetamergeConfig IDIversion="Created by SDI7.2 - 2024-06-26" created="Thu Nov 07 23:19:05 CET 2024" createdBy="eddiehartman" modified="Mon Nov 11 13:25:18 CET 2024" modifiedBy="eddiehartman" version="7.1.1">
     <Folder name="AssemblyLines">
         <AssemblyLine name="jarifyScriptedConnector">
-            <ModTime>1731271263912</ModTime>
+            <ModTime>1731327888719</ModTime>
             <Settings/>
             <Hooks/>
             <CheckpointConfig/>
@@ -16,26 +16,24 @@
                 <ProxySettings/>
             </SimulationConfig>
             <LogConfig/>
-            <ContainerEF name="EntryFeedContainer">
-                <ModTime>1731269417861</ModTime>
-            </ContainerEF>
+            <ContainerEF name="EntryFeedContainer"/>
             <ContainerDF name="DataFlowContainer">
-                <ModTime>1731271263912</ModTime>
+                <ModTime>1731327888719</ModTime>
                 <ALMap name="testInput">
                     <InheritFrom>[no inheritance]</InheritFrom>
-                    <ModTime>1731271263912</ModTime>
+                    <ModTime>1731327888719</ModTime>
                     <AttributeMap name="Input">
                         <InheritFrom>[parent]</InheritFrom>
-                        <ModTime>1731271263912</ModTime>
+                        <ModTime>1731327888719</ModTime>
                         <AttributeMapItem>
                             <Name>configPath</Name>
                             <Type>advanced</Type>
-                            <Script>"C:\\TDI\\SolDir\\TutProfile\\TutProfile.xml"</Script>
+                            <Script>"C:\\TDI\\SolDir\\jarifyScriptConnector\\jarifyScriptConnector.xml"</Script>
                         </AttributeMapItem>
                         <AttributeMapItem>
                             <Name>connectorName</Name>
                             <Type>advanced</Type>
-                            <Script>"ibmdi.SimpleScriptedConnector"</Script>
+                            <Script>"SimpleScriptedConnector"</Script>
                         </AttributeMapItem>
                         <AttributeMapItem>
                             <Name>debug</Name>
@@ -55,7 +53,6 @@
                     <ModTime>1731269947783</ModTime>
                     <AttributeMap name="Input">
                         <InheritFrom>[parent]</InheritFrom>
-                        <ModTime>1731269947783</ModTime>
                         <AttributeMapItem>
                             <Name>manifest_template</Name>
                             <Type>substitution</Type>
@@ -474,7 +471,7 @@ _zipperObj = function(useBuffer) {
 _zipper = new _zipperObj();]]></parameter>
                 </Script>
                 <Script name="DoIt">
-                    <ModTime>1731270583518</ModTime>
+                    <ModTime>1731327611174</ModTime>
                     <parameter name="script"><![CDATA[var jarEntries = {}; // The directory of the files in the jar file 
 var ui = getUserInput(work);
 
@@ -506,6 +503,7 @@ addFile({
 	content: work.getString("scriptconnector_class"),
 	base64: true	
 })
+/*
 // And now the NLs folder and file
 addFile({
 	entries: jarEntries,
@@ -524,7 +522,7 @@ addFile({
 	path: ui.internalName + ".properties",
 	content: work.getString("properties_template")
 })
-
+*/
 _zipper.log("Creating JAR file: " + ui.jarfilePath);
 try {
 	_zipper.zip({
@@ -2822,7 +2820,7 @@ try {
             </InitParams>
         </AssemblyLine>
     <AssemblyLine name="__testJarredScriptConnector">
-            <ModTime>1731271401266</ModTime>
+            <ModTime>1731327540487</ModTime>
             <Settings/>
             <Hooks/>
             <CheckpointConfig/>
@@ -2830,61 +2828,106 @@ try {
             <SimulationConfig>
                 <SimulationStates>
                     <Component name="DumpWorkEntry" state="Enabled"/>
-                    <Component name="JarredScriptConnector" state="Enabled"/>
+                    <Component name="SimpleScriptedConnector from library" state="Enabled"/>
+                    <Component name="ScriptedConnector" state="Enabled"/>
                 </SimulationStates>
                 <ProxySettings/>
             </SimulationConfig>
             <LogConfig/>
             <ContainerEF name="EntryFeedContainer">
-                <ModTime>1731271401266</ModTime>
-                <Connector name="JarredScriptConnector">
-                    <InheritFrom>system:/Connectors/ibmdi.SimpleScriptedConnector</InheritFrom>
-                    <ModTime>1731271401266</ModTime>
+                <ModTime>1731327540487</ModTime>
+                <Connector name="SimpleScriptedConnector from library">
+                    <InheritFrom>/Connectors/SimpleScriptedConnector</InheritFrom>
+                    <ModTime>1731327485430</ModTime>
                     <ConnectorMode>Iterator</ConnectorMode>
-                    <ConnectorState>Enabled</ConnectorState>
+                    <ConnectorState>Disabled</ConnectorState>
                     <Configuration>
                         <InheritFrom>[parent]</InheritFrom>
-                        <ModTime>1731271401266</ModTime>
+                        <ModTime>1731327457378</ModTime>
                         <parameter name="max">10</parameter>
                     </Configuration>
                     <Parser>
                         <InheritFrom>[parent]</InheritFrom>
-                        <ModTime>1731271376086</ModTime>
                     </Parser>
                     <AttributeMap name="Input">
                         <InheritFrom>[parent]</InheritFrom>
-                        <ModTime>1731271396224</ModTime>
-                        <AttributeMapItem>
-                            <Name>*</Name>
-                            <Type>simple</Type>
-                            <Simple>*</Simple>
-                        </AttributeMapItem>
                     </AttributeMap>
                     <AttributeMap name="Output">
                         <InheritFrom>[parent]</InheritFrom>
-                        <ModTime>1731271376086</ModTime>
                     </AttributeMap>
                     <DeltaSettings>
-                        <ModTime>1731271385762</ModTime>
+                        <ModTime>1731327443713</ModTime>
                         <WhenToCommit>After every database operation</WhenToCommit>
                         <RowLocking>SERIALIZABLE</RowLocking>
                         <ChangeDetectionMode>DETECT_ALL</ChangeDetectionMode>
                     </DeltaSettings>
                     <Schema name="Input">
                         <InheritFrom>[parent]</InheritFrom>
-                        <ModTime>1731271376086</ModTime>
                     </Schema>
                     <Schema name="Output">
                         <InheritFrom>[parent]</InheritFrom>
-                        <ModTime>1731271376086</ModTime>
                     </Schema>
                     <LinkCriteria>
                         <InheritFrom>[parent]</InheritFrom>
-                        <ModTime>1731271376086</ModTime>
                     </LinkCriteria>
                     <Hooks>
                         <InheritFrom>[parent]</InheritFrom>
-                        <ModTime>1731271376086</ModTime>
+                    </Hooks>
+                    <CheckpointConfig/>
+                    <SandboxConfig/>
+                    <Reconnect>
+                        <InheritFrom>[parent]</InheritFrom>
+                        <ReconnectRules/>
+                    </Reconnect>
+                    <Operations/>
+                    <PoolDefinition>
+                        <InheritFrom>[parent]</InheritFrom>
+                    </PoolDefinition>
+                    <PoolInstance/>
+                </Connector>
+                <Connector name="ScriptedConnector">
+                    <InheritFrom>/Connectors/ScriptedConnector</InheritFrom>
+                    <ModTime>1731327540487</ModTime>
+                    <ConnectorMode>Iterator</ConnectorMode>
+                    <ConnectorState>Enabled</ConnectorState>
+                    <Configuration>
+                        <InheritFrom>[parent]</InheritFrom>
+                        <ModTime>1731327540487</ModTime>
+                        <parameter name="max">10</parameter>
+                    </Configuration>
+                    <Parser>
+                        <InheritFrom>[parent]</InheritFrom>
+                        <ModTime>1731327512497</ModTime>
+                    </Parser>
+                    <AttributeMap name="Input">
+                        <InheritFrom>[parent]</InheritFrom>
+                        <ModTime>1731327512497</ModTime>
+                    </AttributeMap>
+                    <AttributeMap name="Output">
+                        <InheritFrom>[parent]</InheritFrom>
+                        <ModTime>1731327512497</ModTime>
+                    </AttributeMap>
+                    <DeltaSettings>
+                        <ModTime>1731327535256</ModTime>
+                        <WhenToCommit>After every database operation</WhenToCommit>
+                        <RowLocking>SERIALIZABLE</RowLocking>
+                        <ChangeDetectionMode>DETECT_ALL</ChangeDetectionMode>
+                    </DeltaSettings>
+                    <Schema name="Input">
+                        <InheritFrom>[parent]</InheritFrom>
+                        <ModTime>1731327512497</ModTime>
+                    </Schema>
+                    <Schema name="Output">
+                        <InheritFrom>[parent]</InheritFrom>
+                        <ModTime>1731327512497</ModTime>
+                    </Schema>
+                    <LinkCriteria>
+                        <InheritFrom>[parent]</InheritFrom>
+                        <ModTime>1731327512497</ModTime>
+                    </LinkCriteria>
+                    <Hooks>
+                        <InheritFrom>[parent]</InheritFrom>
+                        <ModTime>1731327512497</ModTime>
                     </Hooks>
                     <CheckpointConfig/>
                     <SandboxConfig/>
@@ -2900,7 +2943,7 @@ try {
                 </Connector>
             </ContainerEF>
             <ContainerDF name="DataFlowContainer">
-                <ModTime>1731271385399</ModTime>
+                <ModTime>1731327530576</ModTime>
                 <Script name="DumpWorkEntry">
                     <ModTime>1731271406534</ModTime>
                     <parameter name="script"><![CDATA[// Dump the work entry

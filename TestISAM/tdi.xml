@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MetamergeConfig created="Sun Nov 10 21:09:23 CET 2024" version="7.1.1">
+	<Folder name="Connectors">
+		<Connector name="MyScriptedConnector">
+			<InheritFrom>system:/Connectors/ibmdi.ScriptConnector</InheritFrom>
+			<ModTime>1731268027053</ModTime>
+			<ConnectorMode>AddOnly</ConnectorMode>
+			<ConnectorState>Enabled</ConnectorState>
+			<Configuration>
+				<InheritFrom>[parent]</InheritFrom>
+				<ModTime>1731268027053</ModTime>
+				<parameter name="includeFiles"/>
+				<parameter name="script">
+					<![CDATA[// Sample connector// Place initialization code before function declarations//var counter = 0;function selectEntries(){	counter = 0;}function getNextEntry (){	if (counter > 10) { 		result.setStatus (0);		result.setMessage ("End of input");		return;	}	entry.setAttribute ("counter", counter);	counter++;}function putEntry (){}function modEntry (){}function deleteEntry (){}function findEntry (){}function querySchema (){	var e = new com.ibm.di.entry.Entry();	e.addAttributeValue("name","counter");	e.addAttributeValue("syntax","Number");	list.add(e);	result.setStatus (1);}]]>
+				</parameter>
+			</Configuration>
+			<Parser>
+				<InheritFrom>[parent]</InheritFrom>
+				<ModTime>1731267973019</ModTime>
+			</Parser>
+			<AttributeMap name="Input">
+				<InheritFrom>[parent]</InheritFrom>
+				<ModTime>1731267973019</ModTime>
+			</AttributeMap>
+			<AttributeMap name="Output">
+				<InheritFrom>[parent]</InheritFrom>
+				<ModTime>1731267973019</ModTime>
+			</AttributeMap>
+			<DeltaSettings/>
+			<Schema name="Input">
+				<InheritFrom>[parent]</InheritFrom>
+				<ModTime>1731267973019</ModTime>
+			</Schema>
+			<Schema name="Output">
+				<InheritFrom>[parent]</InheritFrom>
+				<ModTime>1731267973019</ModTime>
+			</Schema>
+			<LinkCriteria>
+				<InheritFrom>[parent]</InheritFrom>
+				<ModTime>1731267973019</ModTime>
+			</LinkCriteria>
+			<Hooks>
+				<InheritFrom>[parent]</InheritFrom>
+				<ModTime>1731267973019</ModTime>
+			</Hooks>
+			<CheckpointConfig/>
+			<SandboxConfig/>
+			<Reconnect>
+				<InheritFrom>[parent]</InheritFrom>
+				<ReconnectRules/>
+			</Reconnect>
+			<Operations/>
+			<PoolDefinition>
+				<InheritFrom>[parent]</InheritFrom>
+				<ModTime>1731267980131</ModTime>
+				<Enabled>false</Enabled>
+				<MinPoolSize>0</MinPoolSize>
+				<MaxPoolSize>0</MaxPoolSize>
+				<PurgeInterval>0</PurgeInterval>
+				<InitializeAttempts>1</InitializeAttempts>
+				<InitializeSleepInterval>0</InitializeSleepInterval>
+			</PoolDefinition>
+			<PoolInstance/>
+		</Connector>
+	</Folder>
+</MetamergeConfig>
